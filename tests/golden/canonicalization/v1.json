@@ -25,7 +25,7 @@
         "x": null
       },
       "canonical": "{\"x\":null}",
-      "sha256": "c6b8df5a47f8350d5e33f504793d62cf39c0c3da43f5d8a3b9b82e5d0da49733"
+      "sha256": "c6b8df5aba33a39cbdee46ffaf77fae93ea2aa7d99d66408162b05a42105bd71"
     },
     {
       "name": "utf16-key-order",
@@ -34,7 +34,7 @@
         "": 2
       },
       "canonical": "{\"𐀀\":1,\"\":2}",
-      "sha256": "3dbff9e16800ac87125b769b23241bf41eb83fd55addd86302485bfc76964ba4"
+      "sha256": "4045c21a23c8ae8f8d9add81f54bd506bee65885099876fb4afb378b1f2c3516"
     }
   ]
 }
