@@ -66,6 +66,20 @@ class ArtifactService:
                 raise NotFound(f"revision not found: {production_revision_id}")
             if str(revision["production_id"]) != production_id:
                 raise InvalidArtifact("artifact revision must belong to the same production")
+        if producer_job_id is not None:
+            job = db.execute("SELECT production_id FROM job_specs WHERE id = ?", (producer_job_id,)).fetchone()
+            if not job:
+                raise NotFound(f"job not found: {producer_job_id}")
+            if str(job["production_id"]) != production_id:
+                raise InvalidArtifact("artifact job must belong to the same production")
+        if producer_attempt_id is not None:
+            if producer_job_id is None:
+                raise InvalidArtifact("producer attempt requires producer job")
+            attempt = db.execute("SELECT job_id FROM attempts WHERE id = ?", (producer_attempt_id,)).fetchone()
+            if not attempt:
+                raise NotFound(f"attempt not found: {producer_attempt_id}")
+            if str(attempt["job_id"]) != producer_job_id:
+                raise InvalidArtifact("artifact attempt must belong to producer job")
         now = self.clock.now()
         db.execute(
             "INSERT OR IGNORE INTO objects(digest_sha256,byte_size,object_relpath,created_at) VALUES (?,?,?,?)",

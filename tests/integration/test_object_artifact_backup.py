@@ -308,7 +308,10 @@ class StorageLayoutMigrationTests(unittest.TestCase):
                         connection.execute("SELECT name FROM projects WHERE id = ?", ("prj_old",)).fetchone()[0],
                         "Old",
                     )
-                    self.assertEqual(connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0], 2)
+                    self.assertEqual(
+                        connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0],
+                        max(version for version, _ in MIGRATIONS),
+                    )
             finally:
                 kernel.close()
 

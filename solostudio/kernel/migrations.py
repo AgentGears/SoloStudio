@@ -137,4 +137,54 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         ON artifact_dependencies(source_artifact_id);
         """,
     ),
+    (
+        3,
+        """
+        CREATE TABLE job_specs (
+            id TEXT PRIMARY KEY,
+            production_id TEXT NOT NULL REFERENCES productions(id),
+            job_class TEXT NOT NULL CHECK (job_class IN ('STATE_PROPOSAL','ARTIFACT')),
+            source_state_version INTEGER NULL,
+            production_revision_id TEXT NULL REFERENCES production_revisions(id),
+            variant_id TEXT NULL,
+            job_type TEXT NOT NULL,
+            semantic_capability TEXT NOT NULL,
+            spec_json TEXT NOT NULL,
+            spec_hash TEXT NOT NULL,
+            route_json TEXT NOT NULL,
+            input_fingerprint TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('QUEUED','RUNNING','SUCCEEDED','FAILED','CANCELED')),
+            max_attempts INTEGER NOT NULL DEFAULT 2 CHECK (max_attempts >= 1),
+            created_at TEXT NOT NULL,
+            finished_at TEXT NULL
+        );
+
+        CREATE INDEX idx_job_specs_state ON job_specs(state);
+        CREATE INDEX idx_job_specs_fingerprint
+        ON job_specs(production_id, semantic_capability, input_fingerprint);
+        CREATE INDEX idx_job_specs_spec_hash
+        ON job_specs(production_id, spec_hash);
+
+        CREATE TABLE attempts (
+            id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL REFERENCES job_specs(id),
+            attempt_number INTEGER NOT NULL,
+            state TEXT NOT NULL CHECK (state IN (
+                'CREATED','RUNNING','SUCCEEDED','FAILED','CANCELED','INTERRUPTED'
+            )),
+            temp_relpath TEXT NOT NULL,
+            executor_identity TEXT NULL,
+            result_json TEXT NULL,
+            started_at TEXT NULL,
+            finished_at TEXT NULL,
+            error_code TEXT NULL,
+            error_message TEXT NULL,
+            progress_json TEXT NOT NULL,
+            UNIQUE(job_id, attempt_number)
+        );
+
+        CREATE INDEX idx_attempts_job ON attempts(job_id, attempt_number);
+        CREATE INDEX idx_attempts_state ON attempts(state);
+        """,
+    ),
 )
