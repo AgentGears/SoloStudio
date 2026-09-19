@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from solostudio.app.channel import KernelChannel
+from solostudio.kernel.artifacts import ArtifactService, ObjectStore
+from solostudio.kernel.backup import BackupService
 from solostudio.kernel.clock import Clock, SystemClock
 from solostudio.kernel.ids import IdSource, RandomIdSource
 from solostudio.kernel.principals import AGENT_PRINCIPAL, SYSTEM_PRINCIPAL, USER_PRINCIPAL
@@ -15,6 +18,9 @@ from solostudio.kernel.store import KernelStore
 class StudioKernel:
     data_dir: Path
     store: KernelStore
+    objects: ObjectStore
+    artifacts: ArtifactService
+    backups: BackupService
     productions: ProductionService
     user: KernelChannel
     agent: KernelChannel
@@ -27,17 +33,41 @@ class StudioKernel:
 def bootstrap(data_dir: str | Path, *, clock: Clock | None = None, ids: IdSource | None = None) -> StudioKernel:
     root = Path(data_dir)
     root.mkdir(parents=True, exist_ok=True)
-    (root / "objects").mkdir(exist_ok=True)
-    (root / "backups").mkdir(exist_ok=True)
+    for name in ("db", "objects", "object-tmp", "tmp", "backups", "exports", "logs", "runtime"):
+        (root / name).mkdir(parents=True, exist_ok=True)
+
     active_clock = clock or SystemClock()
     active_ids = ids or RandomIdSource()
-    store = KernelStore(root / "studio.db", active_clock)
-    productions = ProductionService(store, active_clock, active_ids)
+    _prepare_database_layout(root)
+
+    store = KernelStore(root / "db" / "studio.db", active_clock)
+    objects = ObjectStore(root)
+    artifacts = ArtifactService(store, objects, active_clock, active_ids)
+    productions = ProductionService(store, active_clock, active_ids, artifacts)
+    backups = BackupService(root, store, objects, active_clock, active_ids)
     return StudioKernel(
         root,
         store,
+        objects,
+        artifacts,
+        backups,
         productions,
         KernelChannel(USER_PRINCIPAL, productions),
         KernelChannel(AGENT_PRINCIPAL, productions),
         KernelChannel(SYSTEM_PRINCIPAL, productions),
     )
+
+
+def _prepare_database_layout(root: Path) -> None:
+    legacy = root / "studio.db"
+    target = root / "db" / "studio.db"
+    if legacy.exists() and target.exists():
+        raise RuntimeError("database layout is ambiguous: both legacy and current locations exist")
+    if not legacy.exists():
+        return
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    for suffix in ("", "-wal", "-shm"):
+        source = root / f"studio.db{suffix}"
+        if source.exists():
+            os.replace(source, target.parent / source.name)
