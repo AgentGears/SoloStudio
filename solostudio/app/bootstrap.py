@@ -9,6 +9,7 @@ from solostudio.kernel.artifacts import ArtifactService, ObjectStore
 from solostudio.kernel.backup import BackupService
 from solostudio.kernel.clock import Clock, SystemClock
 from solostudio.kernel.ids import IdSource, RandomIdSource
+from solostudio.kernel.jobs import JobService, SupervisedMediaWorker
 from solostudio.kernel.principals import AGENT_PRINCIPAL, SYSTEM_PRINCIPAL, USER_PRINCIPAL
 from solostudio.kernel.productions import ProductionService
 from solostudio.kernel.store import KernelStore
@@ -22,6 +23,8 @@ class StudioKernel:
     artifacts: ArtifactService
     backups: BackupService
     productions: ProductionService
+    jobs: JobService
+    worker: SupervisedMediaWorker
     user: KernelChannel
     agent: KernelChannel
     system: KernelChannel
@@ -44,6 +47,9 @@ def bootstrap(data_dir: str | Path, *, clock: Clock | None = None, ids: IdSource
     objects = ObjectStore(root)
     artifacts = ArtifactService(store, objects, active_clock, active_ids)
     productions = ProductionService(store, active_clock, active_ids, artifacts)
+    jobs = JobService(root, store, artifacts, productions, active_clock, active_ids)
+    jobs.recover_startup()
+    worker = SupervisedMediaWorker(jobs)
     backups = BackupService(root, store, objects, active_clock, active_ids)
     return StudioKernel(
         root,
@@ -52,6 +58,8 @@ def bootstrap(data_dir: str | Path, *, clock: Clock | None = None, ids: IdSource
         artifacts,
         backups,
         productions,
+        jobs,
+        worker,
         KernelChannel(USER_PRINCIPAL, productions),
         KernelChannel(AGENT_PRINCIPAL, productions),
         KernelChannel(SYSTEM_PRINCIPAL, productions),
