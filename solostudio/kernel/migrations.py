@@ -93,4 +93,48 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         CREATE INDEX idx_journal_entity ON journal_entries(entity_type, entity_id, seq);
         """,
     ),
+    (
+        2,
+        """
+        CREATE TABLE objects (
+            digest_sha256 TEXT PRIMARY KEY,
+            byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+            object_relpath TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE artifacts (
+            id TEXT PRIMARY KEY,
+            object_digest TEXT NOT NULL REFERENCES objects(digest_sha256),
+            production_id TEXT NOT NULL REFERENCES productions(id),
+            production_revision_id TEXT NULL REFERENCES production_revisions(id),
+            variant_id TEXT NULL,
+            kind TEXT NOT NULL,
+            media_type TEXT NOT NULL,
+            producer_stage TEXT NOT NULL,
+            producer_job_id TEXT NULL,
+            producer_attempt_id TEXT NULL,
+            input_fingerprint TEXT NULL,
+            metadata_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX idx_artifacts_production ON artifacts(production_id);
+        CREATE INDEX idx_artifacts_revision ON artifacts(production_revision_id);
+        CREATE INDEX idx_artifacts_variant ON artifacts(variant_id);
+        CREATE INDEX idx_artifacts_fingerprint
+        ON artifacts(production_id, kind, input_fingerprint);
+
+        CREATE TABLE artifact_dependencies (
+            artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+            source_artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+            dependency_role TEXT NOT NULL,
+            PRIMARY KEY (artifact_id, source_artifact_id, dependency_role),
+            CHECK (artifact_id <> source_artifact_id)
+        );
+
+        CREATE INDEX idx_artifact_dependencies_source
+        ON artifact_dependencies(source_artifact_id);
+        """,
+    ),
 )

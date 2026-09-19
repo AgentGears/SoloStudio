@@ -15,6 +15,7 @@ class KernelStore:
         self.path = path
         self.clock = clock
         self._lock = threading.RLock()
+        path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys = ON")
@@ -67,6 +68,16 @@ class KernelStore:
     def read(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
             yield self._connection
+
+    def backup_to(self, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            backup = sqlite3.connect(destination)
+            try:
+                self._connection.backup(backup)
+                backup.commit()
+            finally:
+                backup.close()
 
 
 def _statements(script: str) -> list[str]:
