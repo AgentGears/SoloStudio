@@ -1,0 +1,40 @@
+{
+  "canonicalization_version": 1,
+  "vectors": [
+    {
+      "name": "nested-unicode",
+      "payload": {
+        "z": [
+          3,
+          {
+            "b": "β",
+            "a": null
+          }
+        ],
+        "a": {
+          "y": true,
+          "x": 1
+        }
+      },
+      "canonical": "{\"a\":{\"x\":1,\"y\":true},\"z\":[3,{\"a\":null,\"b\":\"β\"}]}",
+      "sha256": "6a04c5afc3e50a8d088f743bdce388aa301d15fb9ebdac702b13eae3ce4761f4"
+    },
+    {
+      "name": "null-value",
+      "payload": {
+        "x": null
+      },
+      "canonical": "{\"x\":null}",
+      "sha256": "c6b8df5a47f8350d5e33f504793d62cf39c0c3da43f5d8a3b9b82e5d0da49733"
+    },
+    {
+      "name": "utf16-key-order",
+      "payload": {
+        "𐀀": 1,
+        "": 2
+      },
+      "canonical": "{\"𐀀\":1,\"\":2}",
+      "sha256": "3dbff9e16800ac87125b769b23241bf41eb83fd55addd86302485bfc76964ba4"
+    }
+  ]
+}
