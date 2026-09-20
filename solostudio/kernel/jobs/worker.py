@@ -63,10 +63,14 @@ class SupervisedMediaWorker:
                     -1,
                 )
             if completed.returncode != 0:
+                interrupted_by_signal = completed.returncode < 0
                 job_state = self.jobs.fail_attempt(
                     attempt_id,
                     "WORKER_PROCESS_FAILED",
                     _bounded_error(completed.stderr or completed.stdout or f"exit {completed.returncode}"),
+                    billing_ambiguous=(
+                        billing_ambiguous_on_interrupt and interrupted_by_signal
+                    ),
                 )
                 return WorkerRunResult(
                     self.jobs.attempt(attempt_id)["job_id"],
