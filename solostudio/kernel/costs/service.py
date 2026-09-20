@@ -63,11 +63,14 @@ class CostService:
             return None
         if row["state"] != "RESERVED":
             raise InvalidCostState("only a reserved cost can settle")
-        settled = int(row["reserved_microunits"]) if settled_microunits is None else settled_microunits
+        reserved = int(row["reserved_microunits"])
+        settled = reserved if settled_microunits is None else settled_microunits
         if type(settled) is not int:
             raise InvalidCostState("settled cost must be integer microunits")
         if settled < 0:
             raise InvalidCostState("settled cost must be non-negative")
+        if settled > reserved:
+            raise InvalidCostState("settled cost cannot exceed reserved authority")
         now = self.clock.now()
         db.execute(
             "UPDATE cost_ledger SET state='SETTLED',settled_microunits=?,settled_at=? WHERE id=?",
