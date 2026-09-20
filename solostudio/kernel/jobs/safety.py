@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Any
 
 from solostudio.kernel.errors import InvalidArtifact, InvalidCommand, NotFound
+
+
+_DETERMINISTIC_EXECUTORS = {
+    "state-proposal-v1": "deterministic-state-provider",
+    "artifact-provider-v1": "deterministic-artifact-provider",
+}
 
 
 class SafeExecutionMixin:
@@ -15,7 +22,7 @@ class SafeExecutionMixin:
         with self.store.write() as db:
             row = db.execute(
                 """
-                SELECT a.*,j.production_id,j.state AS job_state
+                SELECT a.*,j.production_id,j.state AS job_state,j.route_json
                 FROM attempts a JOIN job_specs j ON j.id = a.job_id
                 WHERE a.id = ?
                 """,
@@ -25,6 +32,7 @@ class SafeExecutionMixin:
                 raise NotFound(f"attempt not found: {attempt_id}")
             if row["state"] != "CREATED" or row["job_state"] != "QUEUED":
                 raise InvalidCommand("attempt can start only from CREATED under QUEUED job")
+            self._validate_executor_binding(str(row["route_json"]), executor_identity)
 
             path = self.data_dir / str(row["temp_relpath"])
             if path.exists() or path.is_symlink():
@@ -51,6 +59,20 @@ class SafeExecutionMixin:
                 },
             )
             return path
+
+    @staticmethod
+    def _validate_executor_binding(route_json: str, executor_identity: str) -> None:
+        route = json.loads(route_json)
+        if route.get("provider") != "builtin_deterministic":
+            return
+        tool_profile = route.get("tool_profile")
+        expected = _DETERMINISTIC_EXECUTORS.get(tool_profile)
+        if expected is None:
+            raise InvalidCommand("built-in deterministic route has no bound executor")
+        if executor_identity != expected:
+            raise InvalidCommand(
+                f"persisted deterministic route requires executor {expected}, got {executor_identity}"
+            )
 
     def complete_artifact_attempt(self, attempt_id: str, outputs: list[dict[str, Any]]) -> list[str]:
         if not isinstance(outputs, list):
