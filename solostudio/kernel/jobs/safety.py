@@ -8,9 +8,10 @@ from typing import Any
 from solostudio.kernel.errors import InvalidArtifact, InvalidCommand, NotFound
 
 
-_DETERMINISTIC_EXECUTORS = {
+_BOUND_EXECUTORS = {
     "state-proposal-v1": "deterministic-state-provider",
     "artifact-provider-v1": "deterministic-artifact-provider",
+    "media-render-v1": "deterministic-media-renderer",
 }
 
 
@@ -63,16 +64,16 @@ class SafeExecutionMixin:
     @staticmethod
     def _validate_executor_binding(route_json: str, executor_identity: str) -> None:
         route = json.loads(route_json)
-        if route.get("provider") != "builtin_deterministic":
-            return
         tool_profile = route.get("tool_profile")
-        expected = _DETERMINISTIC_EXECUTORS.get(tool_profile)
-        if expected is None:
+        expected = _BOUND_EXECUTORS.get(tool_profile)
+        if expected is not None:
+            if executor_identity != expected:
+                raise InvalidCommand(
+                    f"persisted route requires executor {expected}, got {executor_identity}"
+                )
+            return
+        if route.get("provider") == "builtin_deterministic":
             raise InvalidCommand("built-in deterministic route has no bound executor")
-        if executor_identity != expected:
-            raise InvalidCommand(
-                f"persisted deterministic route requires executor {expected}, got {executor_identity}"
-            )
 
     def complete_artifact_attempt(self, attempt_id: str, outputs: list[dict[str, Any]]) -> list[str]:
         if not isinstance(outputs, list):
