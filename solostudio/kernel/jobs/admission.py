@@ -91,19 +91,31 @@ class AdmissionMixin:
 
             active_rows = list(db.execute(
                 """
-                SELECT id,route_json,max_attempts,variant_id FROM job_specs
+                SELECT id,job_class,source_state_version,production_revision_id,variant_id,
+                       job_type,spec_json,spec_hash,route_json,max_attempts
+                FROM job_specs
                 WHERE production_id = ? AND semantic_capability = ? AND input_fingerprint = ?
-                  AND state IN ('QUEUED','RUNNING')
+                  AND spec_hash = ? AND state IN ('QUEUED','RUNNING')
                 ORDER BY created_at, id
                 """,
-                (production_id, semantic_capability, input_fingerprint),
+                (production_id, semantic_capability, input_fingerprint, spec_hash),
             ))
             for active in active_rows:
+                if str(active["spec_hash"]) != spec_hash:
+                    continue
+                if str(active["spec_json"]) != spec_json:
+                    continue
                 if str(active["route_json"]) != route_json:
                     continue
-                if int(active["max_attempts"]) != max_attempts:
+                if str(active["job_class"]) != job_class or str(active["job_type"]) != job_type:
+                    continue
+                if active["source_state_version"] != source_state_version:
+                    continue
+                if active["production_revision_id"] != production_revision_id:
                     continue
                 if active["variant_id"] != variant_id:
+                    continue
+                if int(active["max_attempts"]) != max_attempts:
                     continue
                 cost_row = db.execute(
                     """
