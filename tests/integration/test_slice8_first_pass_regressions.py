@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
-from solostudio.kernel.errors import InvalidCommand
+from solostudio.kernel.backup.service import _verify_database
+from solostudio.kernel.errors import BackupVerificationFailed, InvalidCommand
 from tests.integration.job_test_support import JobTestCase
 
 
@@ -39,6 +41,42 @@ class Slice8FirstPassRegressionTests(JobTestCase):
                     ),
                 )
 
+    def test_database_verifier_detects_variant_lineage_not_visible_to_foreign_key_check(self) -> None:
+        revision = self.capture_revision()
+        variant_id = self.kernel.variants.create(
+            production_id=self.production_id,
+            source_revision_id=revision.revision_id,
+            intent=self._intent(),
+        )
+        route = self.kernel.capabilities.router.qualify("composition.compile", execution_mode="PRIVATE")
+        admission = self.kernel.jobs.admit(
+            production_id=self.production_id,
+            production_revision_id=revision.revision_id,
+            variant_id=variant_id,
+            job_class="ARTIFACT",
+            job_type="TEST_LINEAGE",
+            semantic_capability="test.lineage",
+            spec={"schema_version": 1},
+            route=route,
+            input_fingerprint="e" * 64,
+            max_attempts=1,
+        )
+        snapshot = self.root / "lineage-check.db"
+        self.kernel.store.backup_to(snapshot)
+        connection = sqlite3.connect(snapshot)
+        try:
+            connection.execute("DROP TRIGGER job_specs_variant_lineage_update")
+            connection.execute(
+                "UPDATE job_specs SET variant_id='var_missing' WHERE id=?",
+                (admission.job_id,),
+            )
+            connection.commit()
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+        finally:
+            connection.close()
+        with self.assertRaises(BackupVerificationFailed):
+            _verify_database(snapshot)
+
     def test_nonvariant_admission_does_not_reuse_variant_scoped_active_job(self) -> None:
         revision = self.capture_revision()
         variant_id = self.kernel.variants.create(
@@ -72,6 +110,14 @@ class Slice8FirstPassRegressionTests(JobTestCase):
         )
         plans = self.kernel.variant_pipeline.plan_inputs(variant_id)
         self.assertEqual([plan.output_role for plan in plans], ["voice.primary"])
+        self.kernel.derivations.execute_job(str(plans[0].job_id))
+        composition_plan = self.kernel.variant_pipeline.plan_composition(variant_id)
+        self.assertEqual(composition_plan.disposition, "ADMITTED_JOB")
+        composition_id = self.kernel.variant_pipeline.execute_job(str(composition_plan.job_id))
+        composition = json.loads(self.kernel.artifacts.read_bytes(composition_id).decode("utf-8"))
+        visual_track = next(track for track in composition["tracks"] if track["kind"] == "visual")
+        self.assertEqual(visual_track["items"], [])
+        self.assertNotIn("captions", {track["kind"] for track in composition["tracks"]})
         with self.kernel.store.read() as db:
             caption_jobs = db.execute(
                 "SELECT COUNT(*) FROM job_specs WHERE production_id=? AND semantic_capability='captions.generate'",
