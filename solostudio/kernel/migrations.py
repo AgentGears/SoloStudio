@@ -324,9 +324,10 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         END;
 
         CREATE TRIGGER delivery_variants_material_immutable
-        BEFORE UPDATE OF production_id,source_revision_id,parent_variant_id,variant_type,intent_json,intent_hash
+        BEFORE UPDATE OF id,production_id,source_revision_id,parent_variant_id,variant_type,intent_json,intent_hash
         ON delivery_variants
-        WHEN NEW.production_id IS NOT OLD.production_id
+        WHEN NEW.id IS NOT OLD.id
+          OR NEW.production_id IS NOT OLD.production_id
           OR NEW.source_revision_id IS NOT OLD.source_revision_id
           OR NEW.parent_variant_id IS NOT OLD.parent_variant_id
           OR NEW.variant_type IS NOT OLD.variant_type
