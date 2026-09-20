@@ -233,4 +233,72 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         ON delivery_variants(parent_variant_id);
         """,
     ),
+    (
+        6,
+        """
+        CREATE TRIGGER artifacts_variant_lineage_insert
+        BEFORE INSERT ON artifacts
+        WHEN NEW.variant_id IS NOT NULL
+         AND NOT EXISTS (
+            SELECT 1 FROM delivery_variants v
+            WHERE v.id = NEW.variant_id
+              AND v.production_id = NEW.production_id
+              AND NEW.production_revision_id IS NOT NULL
+              AND v.source_revision_id = NEW.production_revision_id
+         )
+        BEGIN
+            SELECT RAISE(ABORT, 'artifact variant lineage violation');
+        END;
+
+        CREATE TRIGGER artifacts_variant_lineage_update
+        BEFORE UPDATE OF variant_id,production_id,production_revision_id ON artifacts
+        WHEN NEW.variant_id IS NOT NULL
+         AND NOT EXISTS (
+            SELECT 1 FROM delivery_variants v
+            WHERE v.id = NEW.variant_id
+              AND v.production_id = NEW.production_id
+              AND NEW.production_revision_id IS NOT NULL
+              AND v.source_revision_id = NEW.production_revision_id
+         )
+        BEGIN
+            SELECT RAISE(ABORT, 'artifact variant lineage violation');
+        END;
+
+        CREATE TRIGGER job_specs_variant_lineage_insert
+        BEFORE INSERT ON job_specs
+        WHEN NEW.variant_id IS NOT NULL
+         AND NOT EXISTS (
+            SELECT 1 FROM delivery_variants v
+            WHERE v.id = NEW.variant_id
+              AND v.production_id = NEW.production_id
+              AND NEW.production_revision_id IS NOT NULL
+              AND v.source_revision_id = NEW.production_revision_id
+         )
+        BEGIN
+            SELECT RAISE(ABORT, 'job variant lineage violation');
+        END;
+
+        CREATE TRIGGER job_specs_variant_lineage_update
+        BEFORE UPDATE OF variant_id,production_id,production_revision_id ON job_specs
+        WHEN NEW.variant_id IS NOT NULL
+         AND NOT EXISTS (
+            SELECT 1 FROM delivery_variants v
+            WHERE v.id = NEW.variant_id
+              AND v.production_id = NEW.production_id
+              AND NEW.production_revision_id IS NOT NULL
+              AND v.source_revision_id = NEW.production_revision_id
+         )
+        BEGIN
+            SELECT RAISE(ABORT, 'job variant lineage violation');
+        END;
+
+        CREATE TRIGGER delivery_variants_restrict_delete
+        BEFORE DELETE ON delivery_variants
+        WHEN EXISTS (SELECT 1 FROM artifacts WHERE variant_id = OLD.id)
+          OR EXISTS (SELECT 1 FROM job_specs WHERE variant_id = OLD.id)
+        BEGIN
+            SELECT RAISE(ABORT, 'delivery variant is referenced');
+        END;
+        """,
+    ),
 )
