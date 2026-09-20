@@ -156,6 +156,8 @@ class ExecutionMixin:
             )
             db.execute("UPDATE job_specs SET state='SUCCEEDED',finished_at=? WHERE id=?", (now, row["job_id"]))
             if rendered_video_registered and row["variant_id"] is not None:
+                if row["job_type"] != "MEDIA_RENDER" or row["semantic_capability"] != "media.render":
+                    raise InvalidCommand("only an authoritative media.render JobSpec can make a variant ready")
                 updated = db.execute(
                     "UPDATE delivery_variants SET state='READY' WHERE id=? AND state IN ('PROPOSED','READY')",
                     (row["variant_id"],),
@@ -229,8 +231,8 @@ class ExecutionMixin:
     def _running_attempt_row(self, db: Any, attempt_id: str):
         row = db.execute(
             """
-            SELECT a.*,j.production_id,j.job_class,j.job_type,j.production_revision_id,j.variant_id,
-                   j.state AS job_state,j.max_attempts
+            SELECT a.*,j.production_id,j.job_class,j.job_type,j.semantic_capability,
+                   j.production_revision_id,j.variant_id,j.state AS job_state,j.max_attempts
             FROM attempts a JOIN job_specs j ON j.id=a.job_id WHERE a.id=?
             """,
             (attempt_id,),
