@@ -363,6 +363,12 @@ def probe_media_file(path: Path) -> dict[str, Any]:
     format_info = data.get("format")
     if not isinstance(streams, list) or not isinstance(format_info, dict):
         raise InvalidArtifact("media probe result is incomplete")
+    format_name = format_info.get("format_name")
+    if not isinstance(format_name, str):
+        raise InvalidArtifact("media probe container identity is missing")
+    format_names = {name.strip().lower() for name in format_name.split(",") if name.strip()}
+    if "mp4" not in format_names:
+        raise InvalidArtifact("rendered media container is not MP4")
     video_streams = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "video"]
     audio_streams = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "audio"]
     if not video_streams:
@@ -381,6 +387,7 @@ def probe_media_file(path: Path) -> dict[str, Any]:
         raise InvalidArtifact("media probe reported invalid dimensions, duration, or size")
     return {
         "validator": "ffprobe-v1",
+        "format_name": format_name,
         "width": width,
         "height": height,
         "duration_ms": int(round(duration_seconds * 1000)),
@@ -419,10 +426,17 @@ def _valid_composition_spec(value: Any) -> bool:
     if not isinstance(value, dict) or value.get("schema_version") != 1:
         return False
     intent_hash = value.get("variant_intent_hash")
+    composition_preferences = value.get("composition_preferences")
     canvas = value.get("canvas")
     duration_ms = value.get("duration_ms")
     tracks = value.get("tracks")
-    if not _is_sha256(intent_hash) or not isinstance(canvas, dict) or type(duration_ms) is not int or duration_ms < 1:
+    if (
+        not _is_sha256(intent_hash)
+        or not isinstance(composition_preferences, dict)
+        or not isinstance(canvas, dict)
+        or type(duration_ms) is not int
+        or duration_ms < 1
+    ):
         return False
     if set(canvas) != {"aspect_ratio", "width", "height", "fps"}:
         return False
