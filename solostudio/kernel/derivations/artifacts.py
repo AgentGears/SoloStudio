@@ -30,6 +30,42 @@ _VTT_TIMING = re.compile(
 class DerivationArtifactService(ArtifactService):
     """Artifact authority extensions required by dependency-aware derivations."""
 
+    def prepare_bytes(
+        self,
+        payload: bytes,
+        *,
+        kind: str,
+        media_type: str,
+        producer_stage: str,
+        input_fingerprint: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> PreparedArtifact:
+        if kind != "rendered_video":
+            return super().prepare_bytes(
+                payload,
+                kind=kind,
+                media_type=media_type,
+                producer_stage=producer_stage,
+                input_fingerprint=input_fingerprint,
+                metadata=metadata,
+            )
+        if media_type != "video/mp4":
+            raise InvalidArtifact("rendered_video requires MP4 media type")
+        if len(payload) < 1024:
+            raise InvalidArtifact("rendered_video is below the M0 minimum byte size")
+        probe = _probe_media_bytes(payload)
+        authoritative_metadata = dict(metadata or {})
+        authoritative_metadata["validator_result"] = probe
+        obj = self.objects.promote_bytes(payload)
+        return PreparedArtifact(
+            obj,
+            kind,
+            media_type,
+            producer_stage,
+            input_fingerprint,
+            authoritative_metadata,
+        )
+
     def register_prepared_in_tx(
         self,
         db: Any,
@@ -42,6 +78,16 @@ class DerivationArtifactService(ArtifactService):
         producer_attempt_id: str | None = None,
         dependencies: Iterable[tuple[str, str]] = (),
     ) -> str:
+        if prepared.kind == "rendered_video":
+            self._validate_render_registration(
+                db,
+                prepared,
+                production_id=production_id,
+                production_revision_id=production_revision_id,
+                variant_id=variant_id,
+                producer_job_id=producer_job_id,
+            )
+
         resolved_dependencies = tuple(dependencies)
         if producer_job_id is not None and not resolved_dependencies:
             job = db.execute(
@@ -76,6 +122,62 @@ class DerivationArtifactService(ArtifactService):
             producer_attempt_id=producer_attempt_id,
             dependencies=resolved_dependencies,
         )
+
+    def _validate_render_registration(
+        self,
+        db: Any,
+        prepared: PreparedArtifact,
+        *,
+        production_id: str,
+        production_revision_id: str | None,
+        variant_id: str | None,
+        producer_job_id: str | None,
+    ) -> None:
+        if variant_id is None or production_revision_id is None or producer_job_id is None:
+            raise InvalidArtifact("rendered_video requires variant, revision, and producer JobSpec lineage")
+        job = db.execute(
+            """
+            SELECT production_id,production_revision_id,variant_id,job_class,job_type,semantic_capability
+            FROM job_specs WHERE id=?
+            """,
+            (producer_job_id,),
+        ).fetchone()
+        if not job:
+            raise NotFound(f"job not found: {producer_job_id}")
+        if (
+            str(job["production_id"]) != production_id
+            or job["production_revision_id"] != production_revision_id
+            or job["variant_id"] != variant_id
+            or job["job_class"] != "ARTIFACT"
+            or job["job_type"] != "MEDIA_RENDER"
+            or job["semantic_capability"] != "media.render"
+        ):
+            raise InvalidArtifact("rendered_video producer job does not hold media-render variant authority")
+        variant = db.execute(
+            "SELECT production_id,source_revision_id,intent_json FROM delivery_variants WHERE id=?",
+            (variant_id,),
+        ).fetchone()
+        if not variant:
+            raise NotFound(f"variant not found: {variant_id}")
+        if (
+            str(variant["production_id"]) != production_id
+            or str(variant["source_revision_id"]) != production_revision_id
+        ):
+            raise InvalidArtifact("rendered_video variant lineage is inconsistent")
+        try:
+            intent = json.loads(str(variant["intent_json"]))
+        except json.JSONDecodeError as exc:
+            raise InvalidArtifact("rendered_video variant intent is unreadable") from exc
+        payload = self.objects.read_bytes(
+            prepared.object_record.digest_sha256,
+            prepared.object_record.byte_size,
+            prepared.object_record.object_relpath,
+        )
+        authoritative_probe = _probe_media_bytes(payload)
+        recorded_probe = (prepared.metadata or {}).get("validator_result")
+        if recorded_probe != authoritative_probe:
+            raise InvalidArtifact("rendered_video validator result is not authoritative for retained bytes")
+        _validate_render_probe_for_intent(authoritative_probe, intent)
 
     def captured_source(
         self,
@@ -220,11 +322,15 @@ class DerivationArtifactService(ArtifactService):
                 raise InvalidArtifact("rendered_video requires MP4 media type")
             if len(payload) < 1024:
                 raise InvalidArtifact("rendered_video is below the M0 minimum byte size")
-            with tempfile.TemporaryDirectory() as temp_dir:
-                media_path = Path(temp_dir) / "render.mp4"
-                media_path.write_bytes(payload)
-                probe_media_file(media_path)
+            _probe_media_bytes(payload)
             return
+
+
+def _probe_media_bytes(payload: bytes) -> dict[str, Any]:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        media_path = Path(temp_dir) / "render.mp4"
+        media_path.write_bytes(payload)
+        return probe_media_file(media_path)
 
 
 def probe_media_file(path: Path) -> dict[str, Any]:
@@ -282,6 +388,31 @@ def probe_media_file(path: Path) -> dict[str, Any]:
         "video_streams": len(video_streams),
         "audio_streams": len(audio_streams),
     }
+
+
+def _validate_render_probe_for_intent(probe: dict[str, Any], intent: Any) -> None:
+    if not isinstance(intent, dict):
+        raise InvalidArtifact("rendered_video variant intent is invalid")
+    aspect = intent.get("aspect_ratio")
+    if aspect == "9:16":
+        expected_width, expected_height = 1080, 1920
+    elif aspect == "1:1":
+        expected_width, expected_height = 1080, 1080
+    else:
+        raise InvalidArtifact("rendered_video variant aspect ratio is unsupported")
+    duration_min = intent.get("duration_min_ms")
+    duration_max = intent.get("duration_max_ms")
+    if type(duration_min) is not int or type(duration_max) is not int:
+        raise InvalidArtifact("rendered_video variant duration bounds are invalid")
+    if probe.get("width") != expected_width or probe.get("height") != expected_height:
+        raise InvalidArtifact("rendered_video dimensions do not match bound variant")
+    duration = probe.get("duration_ms")
+    if type(duration) is not int or not (duration_min <= duration <= duration_max) or duration > 90_000:
+        raise InvalidArtifact("rendered_video duration does not match bound variant")
+    if type(probe.get("video_streams")) is not int or probe["video_streams"] < 1:
+        raise InvalidArtifact("rendered_video is missing required video stream")
+    if type(probe.get("audio_streams")) is not int or probe["audio_streams"] < 1:
+        raise InvalidArtifact("rendered_video is missing required audio stream")
 
 
 def _valid_composition_spec(value: Any) -> bool:
