@@ -160,7 +160,7 @@ class VariantService:
         duration_max = intent["duration_max_ms"]
         caption_mode = intent["caption_mode"]
         audio_mode = intent["audio_mode"]
-        if aspect not in _ALLOWED_ASPECTS:
+        if not isinstance(aspect, str) or aspect not in _ALLOWED_ASPECTS:
             raise InvalidCommand(f"unsupported M0 aspect ratio: {aspect}")
         if not isinstance(language, str) or not language.strip():
             raise InvalidCommand("variant language must be a non-empty string")
@@ -170,9 +170,9 @@ class VariantService:
             raise InvalidCommand("variant duration bounds are invalid")
         if duration_max > 90_000:
             raise InvalidCommand("variant duration exceeds the M0 hard media maximum")
-        if caption_mode not in _ALLOWED_CAPTION_MODES:
+        if not isinstance(caption_mode, str) or caption_mode not in _ALLOWED_CAPTION_MODES:
             raise InvalidCommand(f"unsupported M0 caption mode: {caption_mode}")
-        if audio_mode not in _ALLOWED_AUDIO_MODES:
+        if not isinstance(audio_mode, str) or audio_mode not in _ALLOWED_AUDIO_MODES:
             raise InvalidCommand(f"unsupported M0 audio mode: {audio_mode}")
         return {
             "aspect_ratio": aspect,
