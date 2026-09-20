@@ -1,0 +1,42 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from typing import Any
+
+from solostudio.kernel.errors import CapabilityUnavailable, InvalidCommand
+
+
+_EXECUTION_MODES = {"PRIVATE", "BALANCED"}
+_ROUTES: dict[str, dict[str, Any]] = {
+    "text.generate": {
+        "route_id": "route_text_generate_v1",
+        "provider": "builtin_deterministic",
+        "model": "script-template-v1",
+        "tool_profile": "state-proposal-v1",
+        "estimated_cost_microunits": 0,
+        "billing_ambiguity_on_interrupt": False,
+    },
+    "visual.plan": {
+        "route_id": "route_visual_plan_v1",
+        "provider": "builtin_deterministic",
+        "model": "visual-plan-template-v1",
+        "tool_profile": "state-proposal-v1",
+        "estimated_cost_microunits": 0,
+        "billing_ambiguity_on_interrupt": False,
+    },
+}
+
+
+class CapabilityRouter:
+    def qualify(self, capability: str, *, execution_mode: str) -> dict[str, Any]:
+        if execution_mode not in _EXECUTION_MODES:
+            raise InvalidCommand(f"unsupported execution mode: {execution_mode}")
+        route = _ROUTES.get(capability)
+        if route is None:
+            raise CapabilityUnavailable(f"no qualified M0 route for capability: {capability}")
+        qualified = deepcopy(route)
+        qualified["qualification_evidence"] = {
+            "locality": "LOCAL",
+            "execution_mode": execution_mode,
+        }
+        return qualified

@@ -85,6 +85,7 @@ class ExecutionMixin:
                 (canonical_text(result), now, attempt_id),
             )
             db.execute("UPDATE job_specs SET state='SUCCEEDED',finished_at=? WHERE id=?", (now, row["job_id"]))
+            self.costs.settle_job_in_tx(db, str(row["job_id"]))
             self._journal(db, str(row["production_id"]), "attempt", attempt_id, "ATTEMPT_SUCCEEDED", result)
 
     def complete_artifact_attempt(self, attempt_id: str, outputs: list[dict[str, Any]]) -> list[str]:
@@ -145,10 +146,18 @@ class ExecutionMixin:
                 (canonical_text(result), now, attempt_id),
             )
             db.execute("UPDATE job_specs SET state='SUCCEEDED',finished_at=? WHERE id=?", (now, row["job_id"]))
+            self.costs.settle_job_in_tx(db, str(row["job_id"]))
             self._journal(db, str(row["production_id"]), "attempt", attempt_id, "ATTEMPT_SUCCEEDED", result)
             return artifact_ids
 
-    def fail_attempt(self, attempt_id: str, error_code: str, error_message: str) -> str:
+    def fail_attempt(
+        self,
+        attempt_id: str,
+        error_code: str,
+        error_message: str,
+        *,
+        billing_ambiguous: bool = False,
+    ) -> str:
         now = self.clock.now()
         with self.store.write() as db:
             row = self._running_attempt_row(db, attempt_id)
@@ -157,9 +166,14 @@ class ExecutionMixin:
                 (now, error_code, error_message, attempt_id),
             )
             db.execute("UPDATE job_specs SET state='FAILED',finished_at=? WHERE id=?", (now, row["job_id"]))
+            if billing_ambiguous:
+                self.costs.mark_unknown_job_in_tx(db, str(row["job_id"]))
+            else:
+                self.costs.release_job_in_tx(db, str(row["job_id"]))
             self._journal(db, str(row["production_id"]), "attempt", attempt_id, "ATTEMPT_FAILED", {
                 "error_code": error_code,
                 "job_state": "FAILED",
+                "billing_ambiguous": billing_ambiguous,
             })
             return "FAILED"
 
