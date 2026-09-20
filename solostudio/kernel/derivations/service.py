@@ -18,7 +18,7 @@ from solostudio.kernel.costs import CostPlan
 from solostudio.kernel.derivations.artifacts import DerivationArtifactService
 from solostudio.kernel.derivations.fingerprints import expected_fingerprint
 from solostudio.kernel.derivations.models import ArtifactRequirement, PlannedArtifact
-from solostudio.kernel.errors import BudgetExceeded, InvalidArtifact, InvalidCommand
+from solostudio.kernel.errors import BudgetExceeded, InvalidArtifact, InvalidCommand, SoloStudioError
 from solostudio.kernel.identity import canonical_hash, canonical_text
 from solostudio.kernel.jobs import JobService
 from solostudio.kernel.productions import ProductionService
@@ -201,7 +201,7 @@ class DerivationService:
                     }
                 ],
             )
-        except (InvalidArtifact, InvalidCommand, OSError) as exc:
+        except (SoloStudioError, OSError) as exc:
             self.jobs.fail_attempt(
                 attempt_id,
                 getattr(exc, "code", "ARTIFACT_PROVIDER_FAILED"),
@@ -252,7 +252,10 @@ class DerivationService:
             captions = payload.get("captions", {})
             if not isinstance(captions, dict):
                 raise InvalidCommand("captured caption preferences must be an object")
-            if captions.get("enabled", True):
+            enabled = captions.get("enabled", True)
+            if type(enabled) is not bool:
+                raise InvalidCommand("captured caption enabled flag must be boolean")
+            if enabled:
                 style = caption_style_identity(captions.get("style_preset_ref"))
                 language = payload.get("brief", {}).get("primary_language")
                 if not isinstance(language, str) or not language:
@@ -339,10 +342,16 @@ class DerivationService:
         )
 
     def _validated_sources(self, job: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        capability = str(job["semantic_capability"])
         spec = job["spec"]
         sources = spec.get("source_artifacts")
         if not isinstance(sources, list) or not sources:
             raise InvalidCommand("Artifact job requires source_artifacts")
+        expected_roles = {
+            "speech.synthesize": {"script_text": "script_text"},
+            "captions.generate": {"script_text": "script_text"},
+            "image.generate": {"visual_plan": "visual_plan"},
+        }[capability]
         result: dict[str, dict[str, Any]] = {}
         for source in sources:
             if not isinstance(source, dict):
@@ -351,14 +360,59 @@ class DerivationService:
             role = source.get("role")
             if not isinstance(artifact_id, str) or not isinstance(role, str) or not role:
                 raise InvalidCommand("Artifact job source_artifact entry is invalid")
+            if role not in expected_roles or role in result:
+                raise InvalidCommand(f"Artifact job source role is invalid or duplicated: {role}")
             artifact = self.artifacts.artifact(artifact_id, verify_bytes=True)
             if str(artifact["production_id"]) != str(job["production_id"]):
                 raise InvalidCommand("Artifact job source belongs to another production")
             if artifact["production_revision_id"] != job["production_revision_id"]:
                 raise InvalidCommand("Artifact job source is not captured from its bound revision")
-            if role in result:
-                raise InvalidCommand(f"Artifact job source role is duplicated: {role}")
+            if (
+                artifact["variant_id"] is not None
+                or artifact["producer_stage"] != "revision_capture"
+                or artifact["producer_job_id"] is not None
+                or artifact["producer_attempt_id"] is not None
+            ):
+                raise InvalidCommand("Artifact job source must be immutable revision-capture provenance")
+            if str(artifact["kind"]) != expected_roles[role]:
+                raise InvalidCommand(f"Artifact job source role {role} has the wrong Artifact kind")
             result[role] = artifact
+
+        if set(result) != set(expected_roles):
+            raise InvalidCommand("Artifact job source roles do not match the capability contract")
+
+        source_object_digests = spec.get("source_object_digests")
+        semantic_inputs = spec.get("semantic_inputs")
+        if not isinstance(source_object_digests, dict) or not isinstance(semantic_inputs, dict):
+            raise InvalidCommand("Artifact job fingerprint projection is incomplete")
+        if capability in {"speech.synthesize", "captions.generate"}:
+            expected_digest = source_object_digests.get("script_text")
+            if (
+                not isinstance(expected_digest, str)
+                or str(result["script_text"]["object_digest"]) != expected_digest
+            ):
+                raise InvalidCommand("Artifact job script source does not match its fingerprint projection")
+        else:
+            visual_source = result["visual_plan"]
+            try:
+                visual_plan = json.loads(self.artifacts.read_bytes(str(visual_source["id"])).decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise InvalidArtifact("visual_plan source is not valid UTF-8 JSON") from exc
+            if not isinstance(visual_plan, list):
+                raise InvalidArtifact("visual_plan source must decode to a list")
+            output_role = spec.get("output_role")
+            if not isinstance(output_role, str) or not output_role.startswith("visual."):
+                raise InvalidCommand("image Artifact job output role is invalid")
+            item_id = output_role.removeprefix("visual.")
+            matches = [
+                item for item in visual_plan
+                if isinstance(item, dict) and item.get("item_id") == item_id
+            ]
+            if len(matches) != 1:
+                raise InvalidCommand("image Artifact job source does not contain its visual-plan item")
+            item_hash = semantic_inputs.get("visual_plan_item_hash")
+            if not isinstance(item_hash, str) or canonical_hash(matches[0]) != item_hash:
+                raise InvalidCommand("image Artifact job item source does not match its fingerprint projection")
         return result
 
     def _render(
