@@ -41,6 +41,84 @@ class Slice8FirstPassRegressionTests(JobTestCase):
                     ),
                 )
 
+    def test_database_trigger_rejects_variant_row_with_cross_production_revision(self) -> None:
+        other_production_id = self.kernel.productions.create_production(
+            self.project_id,
+            "Other explainer",
+            "other-production",
+        )
+        self.kernel.user.command(
+            production_id=other_production_id,
+            expected_state_version=0,
+            idempotency_key="other-script",
+            action="set_script",
+            command_input={"text": "other"},
+        )
+        other_revision = self.kernel.user.capture_revision(
+            production_id=other_production_id,
+            expected_state_version=1,
+            idempotency_key="other-capture",
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            with self.kernel.store.write() as db:
+                db.execute(
+                    """
+                    INSERT INTO delivery_variants(
+                        id,production_id,source_revision_id,parent_variant_id,variant_type,
+                        intent_json,intent_hash,state,created_at
+                    ) VALUES (?,?,?,NULL,'DELIVERY',?,?,'PROPOSED',?)
+                    """,
+                    (
+                        "var_cross_production",
+                        self.production_id,
+                        other_revision.revision_id,
+                        json.dumps(self._intent(), sort_keys=True, separators=(",", ":")),
+                        "a" * 64,
+                        self.kernel.jobs.clock.now(),
+                    ),
+                )
+
+    def test_delivery_variant_material_identity_is_database_immutable(self) -> None:
+        revision1 = self.capture_revision()
+        variant_id = self.kernel.variants.create(
+            production_id=self.production_id,
+            source_revision_id=revision1.revision_id,
+            intent=self._intent(),
+        )
+        before = self.kernel.variants.variant(variant_id)
+
+        self.kernel.user.command(
+            production_id=self.production_id,
+            expected_state_version=1,
+            idempotency_key="script-r2-immutability",
+            action="set_script",
+            command_input={"text": "second revision"},
+        )
+        revision2 = self.kernel.user.capture_revision(
+            production_id=self.production_id,
+            expected_state_version=2,
+            idempotency_key="capture-r2-immutability",
+        )
+
+        mutations = (
+            ("source_revision_id", revision2.revision_id),
+            ("intent_json", "{}"),
+            ("intent_hash", "b" * 64),
+        )
+        for column, value in mutations:
+            with self.subTest(column=column):
+                with self.assertRaises(sqlite3.IntegrityError):
+                    with self.kernel.store.write() as db:
+                        db.execute(
+                            f"UPDATE delivery_variants SET {column}=? WHERE id=?",
+                            (value, variant_id),
+                        )
+
+        after = self.kernel.variants.variant(variant_id)
+        self.assertEqual(after["source_revision_id"], before["source_revision_id"])
+        self.assertEqual(after["intent_json"], before["intent_json"])
+        self.assertEqual(after["intent_hash"], before["intent_hash"])
+
     def test_database_verifier_detects_variant_lineage_not_visible_to_foreign_key_check(self) -> None:
         revision = self.capture_revision()
         variant_id = self.kernel.variants.create(
