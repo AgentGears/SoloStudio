@@ -220,10 +220,10 @@ class DerivationArtifactService(ArtifactService):
                 raise InvalidArtifact("rendered_video requires MP4 media type")
             if len(payload) < 1024:
                 raise InvalidArtifact("rendered_video is below the M0 minimum byte size")
-            with tempfile.NamedTemporaryFile(suffix=".mp4") as handle:
-                handle.write(payload)
-                handle.flush()
-                probe_media_file(Path(handle.name))
+            with tempfile.TemporaryDirectory() as temp_dir:
+                media_path = Path(temp_dir) / "render.mp4"
+                media_path.write_bytes(payload)
+                probe_media_file(media_path)
             return
 
 
