@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import struct
 import wave
 import zlib
@@ -13,6 +14,12 @@ from solostudio.kernel.errors import (
     InvalidArtifact,
     MissingRetainedArtifact,
     NotFound,
+)
+
+
+_VTT_TIMING = re.compile(
+    r"^(?P<start>(?:\d+:)?[0-5]\d:[0-5]\d\.\d{3})\s+-->\s+"
+    r"(?P<end>(?:\d+:)?[0-5]\d:[0-5]\d\.\d{3})(?:\s+.*)?$"
 )
 
 
@@ -163,13 +170,16 @@ class DerivationArtifactService(ArtifactService):
                 raise InvalidArtifact("voice_audio requires WAV media type")
             try:
                 with wave.open(io.BytesIO(payload), "rb") as wav:
-                    if (
-                        wav.getnchannels() < 1
-                        or wav.getsampwidth() < 1
-                        or wav.getframerate() < 1
-                        or wav.getnframes() < 1
-                    ):
+                    channels = wav.getnchannels()
+                    sample_width = wav.getsampwidth()
+                    frame_rate = wav.getframerate()
+                    frame_count = wav.getnframes()
+                    if channels < 1 or sample_width < 1 or frame_rate < 1 or frame_count < 1:
                         raise InvalidArtifact("voice_audio WAV stream is empty or malformed")
+                    frames = wav.readframes(frame_count)
+                    expected_bytes = frame_count * channels * sample_width
+                    if len(frames) != expected_bytes:
+                        raise InvalidArtifact("voice_audio WAV frame payload is truncated")
             except (wave.Error, EOFError) as exc:
                 raise InvalidArtifact("voice_audio is not a decodable WAV payload") from exc
             return
@@ -180,7 +190,7 @@ class DerivationArtifactService(ArtifactService):
                 text = payload.decode("utf-8")
             except UnicodeDecodeError as exc:
                 raise InvalidArtifact("caption_track bytes are not valid UTF-8") from exc
-            if not text.startswith("WEBVTT\n") or "-->" not in text:
+            if not _valid_webvtt(text):
                 raise InvalidArtifact("caption_track is not a structurally valid WebVTT payload")
             return
         if kind == "visual_image":
@@ -188,6 +198,48 @@ class DerivationArtifactService(ArtifactService):
                 raise InvalidArtifact("visual_image requires PNG media type")
             if not _valid_png(payload):
                 raise InvalidArtifact("visual_image is not a structurally valid PNG payload")
+
+
+def _valid_webvtt(text: str) -> bool:
+    if not text.startswith("WEBVTT\n"):
+        return False
+    saw_cue = False
+    for line in text.splitlines()[1:]:
+        if "-->" not in line:
+            continue
+        match = _VTT_TIMING.fullmatch(line.strip())
+        if match is None:
+            return False
+        start = _vtt_milliseconds(match.group("start"))
+        end = _vtt_milliseconds(match.group("end"))
+        if start is None or end is None or end <= start:
+            return False
+        saw_cue = True
+    return saw_cue
+
+
+def _vtt_milliseconds(value: str) -> int | None:
+    clock, millis = value.rsplit(".", 1)
+    if len(millis) != 3 or not millis.isdigit():
+        return None
+    parts = clock.split(":")
+    if len(parts) == 2:
+        hours = 0
+        minutes_text, seconds_text = parts
+    elif len(parts) == 3:
+        hours_text, minutes_text, seconds_text = parts
+        if not hours_text.isdigit():
+            return None
+        hours = int(hours_text)
+    else:
+        return None
+    if not minutes_text.isdigit() or not seconds_text.isdigit():
+        return None
+    minutes = int(minutes_text)
+    seconds = int(seconds_text)
+    if minutes > 59 or seconds > 59:
+        return None
+    return (((hours * 60) + minutes) * 60 + seconds) * 1000 + int(millis)
 
 
 def _valid_png(payload: bytes) -> bool:
@@ -235,6 +287,9 @@ def _valid_png(payload: bytes) -> bool:
                 raw = zlib.decompress(bytes(idat))
             except zlib.error:
                 return False
-            return len(raw) == height * (1 + width * 3)
+            stride = 1 + width * 3
+            if len(raw) != height * stride:
+                return False
+            return all(raw[row * stride] <= 4 for row in range(height))
         offset = end
     return False
