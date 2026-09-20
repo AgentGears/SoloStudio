@@ -8,6 +8,7 @@ class JobAdmission:
     job_id: str
     attempt_id: str
     reused: bool
+    cost_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

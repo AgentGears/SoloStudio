@@ -18,3 +18,9 @@ class BackupClosureBroken(SoloStudioError):
     code = "BACKUP_CLOSURE_BROKEN"
 class BackupVerificationFailed(SoloStudioError):
     code = "BACKUP_VERIFICATION_FAILED"
+class CapabilityUnavailable(SoloStudioError):
+    code = "CAPABILITY_UNAVAILABLE"
+class BudgetExceeded(SoloStudioError):
+    code = "BUDGET_EXCEEDED"
+class InvalidCostState(SoloStudioError):
+    code = "INVALID_COST_STATE"

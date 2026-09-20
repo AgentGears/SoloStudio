@@ -4,6 +4,7 @@ from pathlib import Path
 
 from solostudio.kernel.artifacts import ArtifactService
 from solostudio.kernel.clock import Clock
+from solostudio.kernel.costs import CostService
 from solostudio.kernel.ids import IdSource
 from solostudio.kernel.productions import ProductionService
 from solostudio.kernel.store import KernelStore
@@ -19,6 +20,7 @@ class JobService(AdmissionMixin, ExecutionMixin, RecoveryMixin):
         store: KernelStore,
         artifacts: ArtifactService,
         productions: ProductionService,
+        costs: CostService,
         clock: Clock,
         ids: IdSource,
     ) -> None:
@@ -26,6 +28,7 @@ class JobService(AdmissionMixin, ExecutionMixin, RecoveryMixin):
         self.store = store
         self.artifacts = artifacts
         self.productions = productions
+        self.costs = costs
         self.clock = clock
         self.ids = ids
         self.tmp_root = data_dir / "tmp"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from solostudio.kernel.costs import CostPlan
 from solostudio.kernel.errors import InvalidCommand, NotFound
 from solostudio.kernel.identity import canonical_hash, canonical_text
 from solostudio.kernel.jobs.models import JobAdmission
@@ -24,6 +25,8 @@ class AdmissionMixin:
         input_fingerprint: str,
         production_revision_id: str | None = None,
         max_attempts: int = 2,
+        cost_plan: CostPlan | None = None,
+        expected_source_state_version: int | None = None,
     ) -> JobAdmission:
         if job_class not in JOB_CLASSES:
             raise InvalidCommand(f"unsupported job class: {job_class}")
@@ -31,6 +34,8 @@ class AdmissionMixin:
             raise InvalidCommand("max_attempts must be at least 1")
         if not job_type or not semantic_capability or not input_fingerprint:
             raise InvalidCommand("job type, capability, and input fingerprint are required")
+        if cost_plan is not None and cost_plan.capability != semantic_capability:
+            raise InvalidCommand("cost plan capability must match job capability")
         now = self.clock.now()
         spec_json = canonical_text(spec)
         route_json = canonical_text(route)
@@ -55,6 +60,10 @@ class AdmissionMixin:
                 if production_revision_id is not None:
                     raise InvalidCommand("STATE_PROPOSAL jobs cannot bind a production revision in M0")
                 source_state_version = int(production["state_version"])
+                if expected_source_state_version is not None and source_state_version != expected_source_state_version:
+                    raise InvalidCommand(
+                        f"state changed during capability admission: expected {expected_source_state_version}, current is {source_state_version}"
+                    )
             else:
                 if production_revision_id is None:
                     raise InvalidCommand("ARTIFACT jobs require a captured production revision")
@@ -83,10 +92,22 @@ class AdmissionMixin:
                 ).fetchone()
                 if not attempt:
                     raise RuntimeError("active job has no attempt")
-                return JobAdmission(str(active["id"]), str(attempt["id"]), True)
+                cost_row = db.execute(
+                    "SELECT id FROM cost_ledger WHERE job_id=? ORDER BY created_at,id LIMIT 1",
+                    (active["id"],),
+                ).fetchone()
+                return JobAdmission(
+                    str(active["id"]),
+                    str(attempt["id"]),
+                    True,
+                    str(cost_row["id"]) if cost_row else None,
+                )
 
             job_id = self.ids.new("job")
             attempt_id = self.ids.new("attempt")
+            cost_id = None
+            if cost_plan is not None:
+                cost_id = self.costs.reserve_unbound_in_tx(db, production_id, cost_plan)
             db.execute(
                 """
                 INSERT INTO job_specs(
@@ -101,13 +122,15 @@ class AdmissionMixin:
                     max_attempts, now,
                 ),
             )
+            if cost_id is not None:
+                self.costs.bind_job_in_tx(db, cost_id, job_id)
             self._insert_attempt(db, job_id, attempt_id, 1)
             self._journal(db, production_id, "job_spec", job_id, "JOB_ADMITTED", {
                 "job_class": job_class,
                 "semantic_capability": semantic_capability,
                 "input_fingerprint": input_fingerprint,
             })
-            return JobAdmission(job_id, attempt_id, False)
+            return JobAdmission(job_id, attempt_id, False, cost_id)
 
     def job(self, job_id: str) -> dict[str, Any]:
         with self.store.read() as db:

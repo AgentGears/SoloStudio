@@ -187,4 +187,28 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         CREATE INDEX idx_attempts_state ON attempts(state);
         """,
     ),
+    (
+        4,
+        """
+        CREATE TABLE cost_ledger (
+            id TEXT PRIMARY KEY,
+            production_id TEXT NOT NULL REFERENCES productions(id),
+            job_id TEXT NULL REFERENCES job_specs(id),
+            capability TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('ESTIMATED','RESERVED','SETTLED','RELEASED','UNKNOWN')),
+            estimated_microunits INTEGER NOT NULL DEFAULT 0 CHECK (estimated_microunits >= 0),
+            reserved_microunits INTEGER NOT NULL DEFAULT 0 CHECK (reserved_microunits >= 0),
+            settled_microunits INTEGER NULL CHECK (settled_microunits IS NULL OR settled_microunits >= 0),
+            unit TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            settled_at TEXT NULL
+        );
+
+        CREATE INDEX idx_cost_ledger_job_state ON cost_ledger(job_id,state);
+        CREATE INDEX idx_cost_ledger_production ON cost_ledger(production_id,created_at);
+        CREATE UNIQUE INDEX idx_cost_ledger_active_job
+        ON cost_ledger(job_id)
+        WHERE job_id IS NOT NULL AND state IN ('RESERVED','UNKNOWN');
+        """,
+    ),
 )
