@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from unittest.mock import patch
+
 from solostudio.kernel.costs import CostPlan
-from solostudio.kernel.errors import InvalidCommand
+from solostudio.kernel.derivations import expected_fingerprint
+from solostudio.kernel.errors import ArtifactDigestMismatch, InvalidCommand
 from tests.integration.job_test_support import JobTestCase
 
 
@@ -229,3 +233,105 @@ class DependencyReuseArtifactJobTests(JobTestCase):
         with self.assertRaises(InvalidCommand):
             self.kernel.derivations.execute_job(admission.job_id)
         self.assertEqual(self.kernel.jobs.attempt(admission.attempt_id)["state"], "CREATED")
+
+    def test_invalid_caption_enabled_type_rejects_before_job_admission(self) -> None:
+        version = self.kernel.productions.working_state(self.production_id)["state_version"]
+        self.kernel.user.command(
+            production_id=self.production_id,
+            expected_state_version=version,
+            idempotency_key="script-caption-type",
+            action="set_script",
+            command_input={"text": "seed", "status": "ready"},
+        )
+        self.kernel.user.command(
+            production_id=self.production_id,
+            expected_state_version=version + 1,
+            idempotency_key="bad-caption-enabled",
+            action="set_caption_preferences",
+            command_input={"captions": {"enabled": "yes"}},
+        )
+        revision = self.kernel.user.capture_revision(
+            production_id=self.production_id,
+            expected_state_version=version + 2,
+            idempotency_key="capture-bad-caption-enabled",
+        )
+        with self.assertRaises(InvalidCommand):
+            self.kernel.derivations.plan_revision(revision.revision_id)
+        with self.kernel.store.read() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM job_specs").fetchone()[0], 0)
+
+    def test_executor_rejects_source_artifact_not_bound_to_projection(self) -> None:
+        revision = self._prepare_revision()
+        plan = self.kernel.derivations.plan_revision(revision.revision_id)
+        voice = next(item for item in plan if item.output_role == "voice.primary")
+        self.kernel.derivations.execute_job(voice.job_id)
+        job = self.kernel.jobs.job(voice.job_id)
+        visual_source = next(
+            artifact
+            for artifact in self.kernel.artifacts.revision_artifacts(revision.revision_id)
+            if artifact["kind"] == "visual_plan" and artifact["producer_stage"] == "revision_capture"
+        )
+        spec = deepcopy(job["spec"])
+        spec["source_artifacts"] = [
+            {"artifact_id": visual_source["id"], "role": "script_text"}
+        ]
+        admission = self.kernel.jobs.admit(
+            production_id=self.production_id,
+            production_revision_id=revision.revision_id,
+            job_class="ARTIFACT",
+            job_type=job["job_type"],
+            semantic_capability=job["semantic_capability"],
+            spec=spec,
+            route=job["route"],
+            input_fingerprint=job["input_fingerprint"],
+            cost_plan=CostPlan(job["semantic_capability"], 0, 0),
+        )
+        with self.assertRaises(InvalidCommand):
+            self.kernel.derivations.execute_job(admission.job_id)
+        self.assertEqual(self.kernel.jobs.attempt(admission.attempt_id)["state"], "CREATED")
+
+    def test_executor_rejects_image_item_hash_not_present_in_source_plan(self) -> None:
+        revision = self._prepare_revision()
+        plan = self.kernel.derivations.plan_revision(revision.revision_id)
+        image = next(item for item in plan if item.output_role == "visual.scene-01")
+        job = self.kernel.jobs.job(image.job_id)
+        spec = deepcopy(job["spec"])
+        spec["semantic_inputs"]["visual_plan_item_hash"] = "0" * 64
+        fingerprint = expected_fingerprint(
+            job["semantic_capability"],
+            output_role=spec["output_role"],
+            semantic_inputs=spec["semantic_inputs"],
+            source_object_digests=spec["source_object_digests"],
+            route=job["route"],
+        )
+        admission = self.kernel.jobs.admit(
+            production_id=self.production_id,
+            production_revision_id=revision.revision_id,
+            job_class="ARTIFACT",
+            job_type=job["job_type"],
+            semantic_capability=job["semantic_capability"],
+            spec=spec,
+            route=job["route"],
+            input_fingerprint=fingerprint,
+            cost_plan=CostPlan(job["semantic_capability"], 0, 0),
+        )
+        with self.assertRaises(InvalidCommand):
+            self.kernel.derivations.execute_job(admission.job_id)
+        self.assertEqual(self.kernel.jobs.attempt(admission.attempt_id)["state"], "CREATED")
+
+    def test_artifact_integrity_failure_after_start_fails_job_instead_of_wedging(self) -> None:
+        revision = self._prepare_revision()
+        plan = self.kernel.derivations.plan_revision(revision.revision_id)
+        voice = next(item for item in plan if item.output_role == "voice.primary")
+        with patch.object(
+            self.kernel.artifacts,
+            "prepare_bytes",
+            side_effect=ArtifactDigestMismatch("simulated retained-object corruption"),
+        ):
+            with self.assertRaises(ArtifactDigestMismatch):
+                self.kernel.derivations.execute_job(voice.job_id)
+        self.assertEqual(self.kernel.jobs.job(voice.job_id)["state"], "FAILED")
+        attempt = self.kernel.jobs.attempt(voice.attempt_id)
+        self.assertEqual(attempt["state"], "FAILED")
+        self.assertEqual(attempt["error_code"], "ARTIFACT_DIGEST_MISMATCH")
+        self.assertEqual(self.kernel.costs.for_job(voice.job_id)["state"], "RELEASED")
