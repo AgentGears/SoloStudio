@@ -24,6 +24,7 @@ class AdmissionMixin:
         route: dict[str, Any],
         input_fingerprint: str,
         production_revision_id: str | None = None,
+        variant_id: str | None = None,
         max_attempts: int = 2,
         cost_plan: CostPlan | None = None,
         expected_source_state_version: int | None = None,
@@ -47,6 +48,7 @@ class AdmissionMixin:
             "route": route,
             "input_fingerprint": input_fingerprint,
             "production_revision_id": production_revision_id,
+            "variant_id": variant_id,
         })
         with self.store.write() as db:
             production = db.execute(
@@ -57,8 +59,8 @@ class AdmissionMixin:
                 raise NotFound(f"production not found: {production_id}")
             source_state_version: int | None = None
             if job_class == "STATE_PROPOSAL":
-                if production_revision_id is not None:
-                    raise InvalidCommand("STATE_PROPOSAL jobs cannot bind a production revision in M0")
+                if production_revision_id is not None or variant_id is not None:
+                    raise InvalidCommand("STATE_PROPOSAL jobs cannot bind captured revision or variant lineage in M0")
                 source_state_version = int(production["state_version"])
                 if expected_source_state_version is not None and source_state_version != expected_source_state_version:
                     raise InvalidCommand(
@@ -75,10 +77,21 @@ class AdmissionMixin:
                     raise NotFound(f"revision not found: {production_revision_id}")
                 if str(revision["production_id"]) != production_id:
                     raise InvalidCommand("artifact job revision belongs to another production")
+                if variant_id is not None:
+                    variant = db.execute(
+                        "SELECT production_id,source_revision_id FROM delivery_variants WHERE id=?",
+                        (variant_id,),
+                    ).fetchone()
+                    if not variant:
+                        raise NotFound(f"variant not found: {variant_id}")
+                    if str(variant["production_id"]) != production_id:
+                        raise InvalidCommand("artifact job variant belongs to another production")
+                    if str(variant["source_revision_id"]) != production_revision_id:
+                        raise InvalidCommand("artifact job variant and captured revision lineage disagree")
 
             active_rows = list(db.execute(
                 """
-                SELECT id,route_json,max_attempts FROM job_specs
+                SELECT id,route_json,max_attempts,variant_id FROM job_specs
                 WHERE production_id = ? AND semantic_capability = ? AND input_fingerprint = ?
                   AND state IN ('QUEUED','RUNNING')
                 ORDER BY created_at, id
@@ -89,6 +102,8 @@ class AdmissionMixin:
                 if str(active["route_json"]) != route_json:
                     continue
                 if int(active["max_attempts"]) != max_attempts:
+                    continue
+                if variant_id is not None and active["variant_id"] != variant_id:
                     continue
                 cost_row = db.execute(
                     """
@@ -123,10 +138,10 @@ class AdmissionMixin:
                     id,production_id,job_class,source_state_version,production_revision_id,variant_id,
                     job_type,semantic_capability,spec_json,spec_hash,route_json,input_fingerprint,
                     state,max_attempts,created_at,finished_at
-                ) VALUES (?,?,?,?,?,NULL,?,?,?,?,?,?,'QUEUED',?,?,NULL)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'QUEUED',?,?,NULL)
                 """,
                 (
-                    job_id, production_id, job_class, source_state_version, production_revision_id,
+                    job_id, production_id, job_class, source_state_version, production_revision_id, variant_id,
                     job_type, semantic_capability, spec_json, spec_hash, route_json, input_fingerprint,
                     max_attempts, now,
                 ),
@@ -138,6 +153,7 @@ class AdmissionMixin:
                 "job_class": job_class,
                 "semantic_capability": semantic_capability,
                 "input_fingerprint": input_fingerprint,
+                "variant_id": variant_id,
             })
             return JobAdmission(job_id, attempt_id, False, cost_id)
 
