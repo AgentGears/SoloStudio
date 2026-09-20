@@ -103,7 +103,7 @@ class AdmissionMixin:
                     continue
                 if int(active["max_attempts"]) != max_attempts:
                     continue
-                if variant_id is not None and active["variant_id"] != variant_id:
+                if active["variant_id"] != variant_id:
                     continue
                 cost_row = db.execute(
                     """
