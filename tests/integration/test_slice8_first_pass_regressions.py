@@ -101,6 +101,7 @@ class Slice8FirstPassRegressionTests(JobTestCase):
         )
 
         mutations = (
+            ("id", "var_rewritten"),
             ("source_revision_id", revision2.revision_id),
             ("intent_json", "{}"),
             ("intent_hash", "b" * 64),
@@ -115,6 +116,7 @@ class Slice8FirstPassRegressionTests(JobTestCase):
                         )
 
         after = self.kernel.variants.variant(variant_id)
+        self.assertEqual(after["id"], before["id"])
         self.assertEqual(after["source_revision_id"], before["source_revision_id"])
         self.assertEqual(after["intent_json"], before["intent_json"])
         self.assertEqual(after["intent_hash"], before["intent_hash"])
