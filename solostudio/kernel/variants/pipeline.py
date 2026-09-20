@@ -70,10 +70,12 @@ class VariantPipelineService:
         max_cost_microunits: int = 0,
         max_attempts: int = 2,
     ) -> list[PlannedArtifact]:
+        self._validate_limits(max_cost_microunits, max_attempts)
         variant, payload = self._variant_payload(variant_id)
         self._validate_variant_against_revision(variant, payload)
-        return self.derivations.plan_revision(
-            str(variant["source_revision_id"]),
+        return self._plan_variant_inputs(
+            variant,
+            payload,
             execution_mode=execution_mode,
             max_cost_microunits=max_cost_microunits,
             max_attempts=max_attempts,
@@ -277,7 +279,7 @@ class VariantPipelineService:
             route=route,
         )
         reusable = self.artifacts.find_reusable(production_id, "cover_image", fingerprint)
-        if reusable is not None:
+        if reusable is not None and reusable.get("variant_id") is None:
             return PlannedArtifact(
                 "cover.primary",
                 "cover.produce",
@@ -370,7 +372,13 @@ class VariantPipelineService:
         )
         if fingerprint != str(job["input_fingerprint"]):
             raise InvalidCommand("composition fingerprint does not match authoritative context")
-        self._validate_output_contract(spec, "composition.primary", "composition_spec", "application/json", "composition.json")
+        self._validate_output_contract(
+            spec,
+            "composition.primary",
+            "composition_spec",
+            "application/json",
+            "composition.json",
+        )
 
         composition = self._compile_composition(variant, source_artifacts)
         payload_bytes = canonical_text(composition).encode("utf-8")
@@ -391,7 +399,11 @@ class VariantPipelineService:
                 ],
             )
         except (SoloStudioError, OSError) as exc:
-            self.jobs.fail_attempt(attempt_id, getattr(exc, "code", "COMPOSITION_COMPILE_FAILED"), str(exc))
+            self.jobs.fail_attempt(
+                attempt_id,
+                getattr(exc, "code", "COMPOSITION_COMPILE_FAILED"),
+                str(exc),
+            )
             raise
         return self._single_artifact(artifact_ids)
 
@@ -423,7 +435,13 @@ class VariantPipelineService:
         )
         if fingerprint != str(job["input_fingerprint"]):
             raise InvalidCommand("render fingerprint does not match authoritative composition source")
-        self._validate_output_contract(spec, "render.primary", "rendered_video", "video/mp4", "render.mp4")
+        self._validate_output_contract(
+            spec,
+            "render.primary",
+            "rendered_video",
+            "video/mp4",
+            "render.mp4",
+        )
 
         composition_bytes = self.artifacts.read_bytes(str(source["id"]))
         self.artifacts._validate("composition_spec", "application/json", composition_bytes)
@@ -446,12 +464,15 @@ class VariantPipelineService:
                         "kind": "rendered_video",
                         "media_type": "video/mp4",
                         "producer_stage": "local_media_renderer",
-                        "metadata": {"validator_result": probe},
                     }
                 ],
             )
         except (SoloStudioError, OSError) as exc:
-            self.jobs.fail_attempt(attempt_id, getattr(exc, "code", "MEDIA_RENDER_FAILED"), str(exc))
+            self.jobs.fail_attempt(
+                attempt_id,
+                getattr(exc, "code", "MEDIA_RENDER_FAILED"),
+                str(exc),
+            )
             raise
         return self._single_artifact(artifact_ids)
 
@@ -464,7 +485,11 @@ class VariantPipelineService:
             raise InvalidCommand("persisted cover route does not match qualified route")
         source = self._single_source(job, "selected_visual", "visual_image")
         preferences = spec.get("semantic_inputs")
-        if not isinstance(preferences, dict) or set(preferences) != {"cover_preferences"} or not isinstance(preferences["cover_preferences"], dict):
+        if (
+            not isinstance(preferences, dict)
+            or set(preferences) != {"cover_preferences"}
+            or not isinstance(preferences["cover_preferences"], dict)
+        ):
             raise InvalidCommand("cover semantic inputs are invalid")
         source_digests = {"selected_visual": str(source["object_digest"])}
         if spec.get("source_object_digests") != source_digests:
@@ -478,7 +503,13 @@ class VariantPipelineService:
         )
         if fingerprint != str(job["input_fingerprint"]):
             raise InvalidCommand("cover fingerprint does not match selected visual context")
-        self._validate_output_contract(spec, "cover.primary", "cover_image", "image/png", "cover.png")
+        self._validate_output_contract(
+            spec,
+            "cover.primary",
+            "cover_image",
+            "image/png",
+            "cover.png",
+        )
 
         payload = self.artifacts.read_bytes(str(source["id"]))
         self.artifacts._validate("visual_image", "image/png", payload)
@@ -499,9 +530,99 @@ class VariantPipelineService:
                 ],
             )
         except (SoloStudioError, OSError) as exc:
-            self.jobs.fail_attempt(attempt_id, getattr(exc, "code", "COVER_PRODUCE_FAILED"), str(exc))
+            self.jobs.fail_attempt(
+                attempt_id,
+                getattr(exc, "code", "COVER_PRODUCE_FAILED"),
+                str(exc),
+            )
             raise
         return self._single_artifact(artifact_ids)
+
+    def _plan_variant_inputs(
+        self,
+        variant: dict[str, Any],
+        payload: dict[str, Any],
+        *,
+        execution_mode: str,
+        max_cost_microunits: int,
+        max_attempts: int,
+    ) -> list[PlannedArtifact]:
+        revision_id = str(variant["source_revision_id"])
+        production_id = str(variant["production_id"])
+        required_roles = set(self._required_output_roles(variant, payload))
+        requirements = self.derivations._requirements(
+            revision_id,
+            payload,
+            execution_mode=execution_mode,
+        )
+        requirements_by_role = {requirement.output_role: requirement for requirement in requirements}
+        missing = sorted(required_roles - set(requirements_by_role))
+        if missing:
+            raise InvalidCommand(
+                "captured revision cannot satisfy variant input roles: " + ", ".join(missing)
+            )
+
+        planned: list[PlannedArtifact] = []
+        for requirement in requirements:
+            if requirement.output_role not in required_roles:
+                continue
+            reusable = self.artifacts.find_reusable(
+                production_id,
+                requirement.kind,
+                requirement.input_fingerprint,
+            )
+            if reusable is not None:
+                planned.append(
+                    PlannedArtifact(
+                        requirement.output_role,
+                        requirement.capability,
+                        requirement.kind,
+                        requirement.input_fingerprint,
+                        "REUSED_ARTIFACT",
+                        artifact_id=str(reusable["id"]),
+                    )
+                )
+                continue
+
+            estimate = self._estimate(requirement.route, max_cost_microunits)
+            spec = {
+                "schema_version": 1,
+                "execution_mode": execution_mode,
+                "output_role": requirement.output_role,
+                "kind": requirement.kind,
+                "media_type": requirement.media_type,
+                "filename": requirement.filename,
+                "semantic_inputs": requirement.semantic_inputs,
+                "source_object_digests": requirement.source_object_digests,
+                "source_artifacts": [
+                    {"artifact_id": artifact_id, "role": role}
+                    for artifact_id, role in requirement.source_artifacts
+                ],
+            }
+            admission = self.jobs.admit(
+                production_id=production_id,
+                production_revision_id=revision_id,
+                job_class="ARTIFACT",
+                job_type=requirement.job_type,
+                semantic_capability=requirement.capability,
+                spec=spec,
+                route=requirement.route,
+                input_fingerprint=requirement.input_fingerprint,
+                max_attempts=max_attempts,
+                cost_plan=CostPlan(requirement.capability, estimate, estimate),
+            )
+            planned.append(
+                PlannedArtifact(
+                    requirement.output_role,
+                    requirement.capability,
+                    requirement.kind,
+                    requirement.input_fingerprint,
+                    "REUSED_JOB" if admission.reused else "ADMITTED_JOB",
+                    job_id=admission.job_id,
+                    attempt_id=admission.attempt_id,
+                )
+            )
+        return planned
 
     def _materialized_composition_context(
         self,
@@ -513,8 +634,9 @@ class VariantPipelineService:
     ) -> _CompositionContext:
         variant, payload = self._variant_payload(variant_id)
         self._validate_variant_against_revision(variant, payload)
-        plans = self.derivations.plan_revision(
-            str(variant["source_revision_id"]),
+        plans = self._plan_variant_inputs(
+            variant,
+            payload,
             execution_mode=execution_mode,
             max_cost_microunits=max_cost_microunits,
             max_attempts=max_attempts,
@@ -544,9 +666,11 @@ class VariantPipelineService:
             source_digests["captions"] = str(captions["object_digest"])
 
         visual_plan = payload.get("visual_plan")
-        assert isinstance(visual_plan, list)
+        if not isinstance(visual_plan, list):
+            raise InvalidCommand("captured visual plan must be a list")
         for index, item in enumerate(visual_plan):
-            assert isinstance(item, dict)
+            if not isinstance(item, dict) or not isinstance(item.get("item_id"), str) or not item["item_id"]:
+                raise InvalidCommand("captured visual plan item identity is invalid")
             role = f"visual.{item['item_id']}"
             visual = self.artifacts.artifact(str(by_role[role].artifact_id), verify_bytes=True)
             dependency_role = f"visual.{index:04d}"
@@ -587,9 +711,11 @@ class VariantPipelineService:
         if str(variant["intent"]["caption_mode"]) == "burned":
             expected_dependency_roles["captions"] = "captions.primary"
         visual_plan = payload.get("visual_plan")
-        assert isinstance(visual_plan, list)
+        if not isinstance(visual_plan, list):
+            raise InvalidCommand("captured visual plan must be a list")
         for index, item in enumerate(visual_plan):
-            assert isinstance(item, dict)
+            if not isinstance(item, dict) or not isinstance(item.get("item_id"), str) or not item["item_id"]:
+                raise InvalidCommand("captured visual plan item identity is invalid")
             expected_dependency_roles[f"visual.{index:04d}"] = f"visual.{item['item_id']}"
         if set(expected_dependency_roles.values()) != set(required_output_roles):
             raise InvalidCommand("composition source role projection is inconsistent")
@@ -757,16 +883,20 @@ class VariantPipelineService:
         if intent["caption_mode"] == "burned" and captions.get("enabled", True) is not True:
             raise InvalidCommand("burned-caption variant requires captured captions to be enabled")
         visual_plan = payload.get("visual_plan")
-        if not isinstance(visual_plan, list) or not visual_plan:
-            raise InvalidCommand("M0 rendered variant requires at least one captured visual-plan item")
+        if not isinstance(visual_plan, list):
+            raise InvalidCommand("captured visual plan must be a list")
 
     def _required_output_roles(self, variant: dict[str, Any], payload: dict[str, Any]) -> list[str]:
         roles = ["voice.primary"]
         if variant["intent"]["caption_mode"] == "burned":
             roles.append("captions.primary")
         visual_plan = payload.get("visual_plan")
-        assert isinstance(visual_plan, list)
-        roles.extend(f"visual.{item['item_id']}" for item in visual_plan if isinstance(item, dict))
+        if not isinstance(visual_plan, list):
+            raise InvalidCommand("captured visual plan must be a list")
+        for item in visual_plan:
+            if not isinstance(item, dict) or not isinstance(item.get("item_id"), str) or not item["item_id"]:
+                raise InvalidCommand("captured visual plan item identity is invalid")
+            roles.append(f"visual.{item['item_id']}")
         return roles
 
     @staticmethod
@@ -845,7 +975,9 @@ class VariantPipelineService:
         if composition.get("canvas") != self.variants.canvas(intent):
             raise InvalidCommand("composition canvas does not match variant intent")
         duration = composition.get("duration_ms")
-        if type(duration) is not int or not (intent["duration_min_ms"] <= duration <= intent["duration_max_ms"]):
+        if type(duration) is not int or not (
+            intent["duration_min_ms"] <= duration <= intent["duration_max_ms"]
+        ):
             raise InvalidCommand("composition duration is outside variant bounds")
         tracks = composition.get("tracks")
         if not isinstance(tracks, list):
@@ -897,7 +1029,13 @@ class VariantPipelineService:
             str(path),
         ]
         try:
-            completed = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise InvalidArtifact("local media renderer could not execute") from exc
         if completed.returncode != 0:
@@ -905,13 +1043,19 @@ class VariantPipelineService:
             raise InvalidArtifact(f"local media renderer failed: {message}")
 
     @staticmethod
-    def _validate_probe(probe: dict[str, Any], composition: dict[str, Any], variant: dict[str, Any]) -> None:
+    def _validate_probe(
+        probe: dict[str, Any],
+        composition: dict[str, Any],
+        variant: dict[str, Any],
+    ) -> None:
         canvas = composition["canvas"]
         intent = variant["intent"]
         if probe.get("width") != canvas["width"] or probe.get("height") != canvas["height"]:
             raise InvalidArtifact("rendered media dimensions do not match variant canvas")
         duration = probe.get("duration_ms")
-        if type(duration) is not int or not (intent["duration_min_ms"] <= duration <= intent["duration_max_ms"]):
+        if type(duration) is not int or not (
+            intent["duration_min_ms"] <= duration <= intent["duration_max_ms"]
+        ):
             raise InvalidArtifact("rendered media duration is outside variant bounds")
         if duration > 90_000:
             raise InvalidArtifact("rendered media exceeds the M0 hard duration maximum")
