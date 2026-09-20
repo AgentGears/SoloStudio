@@ -380,7 +380,11 @@ class VariantPipelineService:
             "composition.json",
         )
 
-        composition = self._compile_composition(variant, source_artifacts)
+        composition = self._compile_composition(
+            variant,
+            source_artifacts,
+            semantic_inputs["composition_preferences"],
+        )
         payload_bytes = canonical_text(composition).encode("utf-8")
         attempt_id = self._created_attempt(job)
         temp_dir = self.jobs.start_attempt(attempt_id, "deterministic-artifact-provider")
@@ -415,7 +419,7 @@ class VariantPipelineService:
         if job["route"] != expected_route:
             raise InvalidCommand("persisted render route does not match qualified route")
         variant_id = self._job_variant_id(job)
-        variant, _payload = self._variant_payload(variant_id)
+        variant, payload = self._variant_payload(variant_id)
         if str(variant["source_revision_id"]) != str(job["production_revision_id"]):
             raise InvalidCommand("render job revision does not match variant lineage")
 
@@ -446,7 +450,11 @@ class VariantPipelineService:
         composition_bytes = self.artifacts.read_bytes(str(source["id"]))
         self.artifacts._validate("composition_spec", "application/json", composition_bytes)
         composition = json.loads(composition_bytes.decode("utf-8"))
-        self._validate_composition_for_variant(composition, variant)
+        self._validate_composition_for_variant(
+            composition,
+            variant,
+            self._composition_preferences(payload),
+        )
 
         attempt_id = self._created_attempt(job)
         temp_dir = self.jobs.start_attempt(attempt_id, "deterministic-media-renderer")
@@ -754,6 +762,7 @@ class VariantPipelineService:
         self,
         variant: dict[str, Any],
         sources: dict[str, dict[str, Any]],
+        composition_preferences: dict[str, Any],
     ) -> dict[str, Any]:
         intent = variant["intent"]
         visual_roles = sorted(role for role in sources if role.startswith("visual."))
@@ -778,6 +787,7 @@ class VariantPipelineService:
         return {
             "schema_version": 1,
             "variant_intent_hash": str(variant["intent_hash"]),
+            "composition_preferences": json.loads(canonical_text(composition_preferences)),
             "canvas": self.variants.canvas(intent),
             "duration_ms": int(intent["duration_min_ms"]),
             "tracks": tracks,
@@ -968,10 +978,17 @@ class VariantPipelineService:
         if type(max_attempts) is not int or max_attempts < 1:
             raise InvalidCommand("max_attempts must be a positive integer")
 
-    def _validate_composition_for_variant(self, composition: dict[str, Any], variant: dict[str, Any]) -> None:
+    def _validate_composition_for_variant(
+        self,
+        composition: dict[str, Any],
+        variant: dict[str, Any],
+        expected_composition_preferences: dict[str, Any],
+    ) -> None:
         intent = variant["intent"]
         if composition.get("variant_intent_hash") != variant["intent_hash"]:
             raise InvalidCommand("composition intent hash does not match variant")
+        if composition.get("composition_preferences") != expected_composition_preferences:
+            raise InvalidCommand("composition preferences do not match captured revision authority")
         if composition.get("canvas") != self.variants.canvas(intent):
             raise InvalidCommand("composition canvas does not match variant intent")
         duration = composition.get("duration_ms")
