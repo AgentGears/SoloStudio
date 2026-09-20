@@ -8,11 +8,6 @@ import wave
 import zlib
 from typing import Any
 
-from solostudio.definitions import (
-    caption_style_identity,
-    visual_style_identity,
-    voice_profile_identity,
-)
 from solostudio.kernel.capabilities import CapabilityRouter
 from solostudio.kernel.costs import CostPlan
 from solostudio.kernel.derivations.artifacts import DerivationArtifactService
@@ -145,6 +140,8 @@ class DerivationService:
         capability = str(job["semantic_capability"])
         if capability not in _JOB_TYPES:
             raise InvalidCommand(f"unsupported M0 derivation capability: {capability}")
+        if str(job["job_type"]) != _JOB_TYPES[capability]:
+            raise InvalidCommand("Artifact job type does not match its semantic capability")
         if job["state"] != "QUEUED":
             raise InvalidCommand("Artifact job must be queued before execution")
 
@@ -163,10 +160,26 @@ class DerivationService:
             raise InvalidCommand("Artifact job is missing output role")
         if not isinstance(semantic_inputs, dict) or not isinstance(source_object_digests, dict):
             raise InvalidCommand("Artifact job fingerprint projection is incomplete")
+
+        revision_id = job.get("production_revision_id")
+        if not isinstance(revision_id, str) or not revision_id:
+            raise InvalidCommand("Artifact job is missing its captured production revision")
+        revision = self.productions.revision(revision_id)
+        if str(revision["production_id"]) != str(job["production_id"]):
+            raise InvalidCommand("Artifact job revision belongs to another production")
+        revision_payload = json.loads(str(revision["canonical_json"]))
+        authoritative_semantic_inputs = self._authoritative_semantic_inputs(
+            capability,
+            revision_payload,
+            output_role,
+        )
+        if semantic_inputs != authoritative_semantic_inputs:
+            raise InvalidCommand("Artifact job semantic inputs do not match its captured production revision")
+
         authoritative_fingerprint = expected_fingerprint(
             capability,
             output_role=output_role,
-            semantic_inputs=semantic_inputs,
+            semantic_inputs=authoritative_semantic_inputs,
             source_object_digests=source_object_digests,
             route=expected_route,
         )
@@ -231,18 +244,15 @@ class DerivationService:
                 expected_digest=script_digest,
             )
 
-            voice = payload.get("voice", {})
-            if not isinstance(voice, dict):
-                raise InvalidCommand("captured voice preferences must be an object")
-            voice_profile = voice_profile_identity(voice.get("voice_profile_ref"))
-            pace = voice.get("pace")
-            if not isinstance(pace, str) or not pace:
-                raise InvalidCommand("captured voice pace must be a non-empty string")
             requirements.append(
                 self._requirement(
                     capability="speech.synthesize",
                     output_role="voice.primary",
-                    semantic_inputs={"voice_profile": voice_profile, "pace": pace},
+                    semantic_inputs=self._authoritative_semantic_inputs(
+                        "speech.synthesize",
+                        payload,
+                        "voice.primary",
+                    ),
                     source_object_digests={"script_text": script_digest},
                     source_artifacts=((str(script_source["id"]), "script_text"),),
                     execution_mode=execution_mode,
@@ -256,15 +266,15 @@ class DerivationService:
             if type(enabled) is not bool:
                 raise InvalidCommand("captured caption enabled flag must be boolean")
             if enabled:
-                style = caption_style_identity(captions.get("style_preset_ref"))
-                language = payload.get("brief", {}).get("primary_language")
-                if not isinstance(language, str) or not language:
-                    raise InvalidCommand("captured primary language must be a non-empty string")
                 requirements.append(
                     self._requirement(
                         capability="captions.generate",
                         output_role="captions.primary",
-                        semantic_inputs={"caption_style": style, "language": language},
+                        semantic_inputs=self._authoritative_semantic_inputs(
+                            "captions.generate",
+                            payload,
+                            "captions.primary",
+                        ),
                         source_object_digests={"script_text": script_digest},
                         source_artifacts=((str(script_source["id"]), "script_text"),),
                         execution_mode=execution_mode,
@@ -282,7 +292,6 @@ class DerivationService:
                 "visual_plan",
                 expected_digest=visual_plan_digest,
             )
-            visual_style = visual_style_identity()
             seen: set[str] = set()
             for item in visual_plan:
                 if not isinstance(item, dict):
@@ -291,20 +300,97 @@ class DerivationService:
                 if not isinstance(item_id, str) or not item_id or item_id in seen:
                     raise InvalidCommand("captured visual plan item_id values must be unique non-empty strings")
                 seen.add(item_id)
+                output_role = f"visual.{item_id}"
                 requirements.append(
                     self._requirement(
                         capability="image.generate",
-                        output_role=f"visual.{item_id}",
-                        semantic_inputs={
-                            "visual_plan_item_hash": canonical_hash(item),
-                            "visual_style": visual_style,
-                        },
+                        output_role=output_role,
+                        semantic_inputs=self._authoritative_semantic_inputs(
+                            "image.generate",
+                            payload,
+                            output_role,
+                        ),
                         source_object_digests={},
                         source_artifacts=((str(visual_source["id"]), "visual_plan"),),
                         execution_mode=execution_mode,
                     )
                 )
         return requirements
+
+    def _authoritative_semantic_inputs(
+        self,
+        capability: str,
+        payload: dict[str, Any],
+        output_role: str,
+    ) -> dict[str, Any]:
+        captured_defaults = payload.get("captured_defaults")
+        if not isinstance(captured_defaults, dict):
+            raise InvalidCommand("captured revision is missing definition identity snapshots")
+
+        if capability == "speech.synthesize":
+            voice = payload.get("voice")
+            if not isinstance(voice, dict):
+                raise InvalidCommand("captured voice preferences must be an object")
+            pace = voice.get("pace")
+            if not isinstance(pace, str) or not pace:
+                raise InvalidCommand("captured voice pace must be a non-empty string")
+            return {
+                "voice_profile": _captured_definition_identity(
+                    captured_defaults,
+                    "voice_profile",
+                    "voice profile",
+                    expected_reference=voice.get("voice_profile_ref"),
+                ),
+                "pace": pace,
+            }
+
+        if capability == "captions.generate":
+            captions = payload.get("captions")
+            if not isinstance(captions, dict):
+                raise InvalidCommand("captured caption preferences must be an object")
+            enabled = captions.get("enabled", True)
+            if type(enabled) is not bool:
+                raise InvalidCommand("captured caption enabled flag must be boolean")
+            if not enabled:
+                raise InvalidCommand("caption Artifact job cannot bind a revision with captions disabled")
+            language = payload.get("brief", {}).get("primary_language")
+            if not isinstance(language, str) or not language:
+                raise InvalidCommand("captured primary language must be a non-empty string")
+            return {
+                "caption_style": _captured_definition_identity(
+                    captured_defaults,
+                    "caption_style",
+                    "caption style",
+                    expected_reference=captions.get("style_preset_ref"),
+                ),
+                "language": language,
+            }
+
+        if capability == "image.generate":
+            if not output_role.startswith("visual."):
+                raise InvalidCommand("image Artifact job output role is invalid")
+            item_id = output_role.removeprefix("visual.")
+            visual_plan = payload.get("visual_plan")
+            if not isinstance(visual_plan, list):
+                raise InvalidCommand("captured visual plan must be a list")
+            matches = [
+                item
+                for item in visual_plan
+                if isinstance(item, dict) and item.get("item_id") == item_id
+            ]
+            if len(matches) != 1:
+                raise InvalidCommand("image Artifact job output role does not match one captured visual-plan item")
+            return {
+                "visual_plan_item_hash": canonical_hash(matches[0]),
+                "visual_style": _captured_definition_identity(
+                    captured_defaults,
+                    "visual_style",
+                    "visual style",
+                    expected_reference="default",
+                ),
+            }
+
+        raise InvalidCommand(f"unsupported M0 derivation capability: {capability}")
 
     def _requirement(
         self,
@@ -432,7 +518,7 @@ class DerivationService:
             text = " ".join(script.split())
             return (
                 "WEBVTT\n\n"
-                f"NOTE language={language} style={style_id}\n\n"
+                f"NOTE language={language} style={style_id} fingerprint={fingerprint}\n\n"
                 "00:00.000 --> 00:05.000\n"
                 f"{text}\n"
             ).encode("utf-8")
@@ -450,6 +536,34 @@ class DerivationService:
             return self.artifacts.read_bytes(str(source["id"])).decode("utf-8")
         except UnicodeDecodeError as exc:
             raise InvalidArtifact(f"{role} source is not valid UTF-8") from exc
+
+
+def _captured_definition_identity(
+    captured_defaults: dict[str, Any],
+    key: str,
+    label: str,
+    *,
+    expected_reference: Any,
+) -> dict[str, str]:
+    snapshot = captured_defaults.get(key)
+    if not isinstance(snapshot, dict):
+        raise InvalidCommand(f"captured revision is missing {label} identity")
+    normalized_reference = "default" if expected_reference is None else expected_reference
+    if snapshot.get("reference") != normalized_reference:
+        raise InvalidCommand(f"captured {label} reference does not match revision preferences")
+    if snapshot.get("resolved") is not True:
+        raise InvalidCommand(f"captured revision contains an unresolved {label} definition")
+    definition_id = snapshot.get("definition_id")
+    content_hash = snapshot.get("content_hash")
+    if not isinstance(definition_id, str) or not definition_id:
+        raise InvalidCommand(f"captured {label} definition id is invalid")
+    if (
+        not isinstance(content_hash, str)
+        or len(content_hash) != 64
+        or any(char not in "0123456789abcdef" for char in content_hash)
+    ):
+        raise InvalidCommand(f"captured {label} content hash is invalid")
+    return {"definition_id": definition_id, "content_hash": content_hash}
 
 
 def _deterministic_wav(fingerprint: str, script: str) -> bytes:
