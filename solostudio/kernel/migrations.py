@@ -211,4 +211,26 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         WHERE job_id IS NOT NULL AND state IN ('RESERVED','UNKNOWN');
         """,
     ),
+    (
+        5,
+        """
+        CREATE TABLE delivery_variants (
+            id TEXT PRIMARY KEY,
+            production_id TEXT NOT NULL REFERENCES productions(id),
+            source_revision_id TEXT NOT NULL REFERENCES production_revisions(id),
+            parent_variant_id TEXT NULL REFERENCES delivery_variants(id),
+            variant_type TEXT NOT NULL,
+            intent_json TEXT NOT NULL,
+            intent_hash TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('PROPOSED','READY','FAILED')),
+            created_at TEXT NOT NULL,
+            UNIQUE(production_id, source_revision_id, intent_hash)
+        );
+
+        CREATE INDEX idx_delivery_variants_revision
+        ON delivery_variants(source_revision_id, created_at);
+        CREATE INDEX idx_delivery_variants_parent
+        ON delivery_variants(parent_variant_id);
+        """,
+    ),
 )
