@@ -1,0 +1,23 @@
+name: PR7 variant pipeline verification
+
+on:
+  push:
+    branches:
+      - m0-a-06-variants-composition-render
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Runtime dependencies
+        run: |
+          ffmpeg -version
+          ffprobe -version
+      - name: Compile
+        run: python -m compileall -q solostudio tests
+      - name: Full repository suite
+        run: python -m unittest discover -v
