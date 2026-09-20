@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -155,6 +156,21 @@ class RetroWorkerSafetyTests(unittest.TestCase):
         self.assertEqual(run.attempt_state, "FAILED")
         self.assertEqual(run.job_state, "FAILED")
         self.assertEqual(self.kernel.jobs.attempt(admission.attempt_id)["error_code"], "WORKER_TIMEOUT")
+        self.assertEqual(self.kernel.costs.for_job(admission.job_id)["state"], "UNKNOWN")
+
+    def test_signal_interrupted_worker_marks_cost_unknown_when_route_is_ambiguous(self) -> None:
+        admission = self.artifact_job(
+            "ambiguous-signal",
+            with_cost=True,
+            billing_ambiguous_on_interrupt=True,
+        )
+        completed = subprocess.CompletedProcess(["worker"], -15, "", "terminated")
+        with patch("solostudio.kernel.jobs.worker.subprocess.run", return_value=completed):
+            run = self.kernel.worker.run(admission.attempt_id, ["worker"])
+        self.assertEqual(run.exit_code, -15)
+        self.assertEqual(run.attempt_state, "FAILED")
+        self.assertEqual(run.job_state, "FAILED")
+        self.assertEqual(self.kernel.jobs.attempt(admission.attempt_id)["error_code"], "WORKER_PROCESS_FAILED")
         self.assertEqual(self.kernel.costs.for_job(admission.job_id)["state"], "UNKNOWN")
 
     def test_orphan_attempt_namespace_is_cleaned_before_first_committed_start(self) -> None:
