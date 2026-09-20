@@ -9,6 +9,7 @@ from solostudio.kernel.errors import InvalidCommand, NotFound
 from solostudio.kernel.identity import canonical_text
 from solostudio.kernel.ids import IdSource
 from solostudio.kernel.store import KernelStore
+from solostudio.kernel.productions.capture_sources import CaptureSourceRepairMixin
 from solostudio.kernel.productions.commands import CommandMixin
 from solostudio.kernel.productions.models import CommandResult, RevisionResult
 from solostudio.kernel.productions.receipts import ReceiptMixin
@@ -16,7 +17,7 @@ from solostudio.kernel.productions.revisions import RevisionMixin
 from solostudio.kernel.productions.state import PRODUCTION_TYPE, WORKING_SCHEMA_VERSION, new_working_state
 
 
-class ProductionService(CommandMixin, RevisionMixin, ReceiptMixin):
+class ProductionService(CommandMixin, CaptureSourceRepairMixin, RevisionMixin, ReceiptMixin):
     def __init__(self, store: KernelStore, clock: Clock, ids: IdSource, artifacts: ArtifactService) -> None:
         self.store = store
         self.clock = clock
@@ -104,4 +105,3 @@ class ProductionService(CommandMixin, RevisionMixin, ReceiptMixin):
     def revisions(self, production_id: str) -> list[dict[str, Any]]:
         with self.store.read() as db:
             return [dict(row) for row in db.execute("SELECT * FROM production_revisions WHERE production_id = ? ORDER BY sequence", (production_id,))]
-

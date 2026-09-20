@@ -168,6 +168,7 @@ def restore_backup(backup_dir: Path, data_dir: Path) -> None:
     db_dir.mkdir(parents=True, exist_ok=True)
     active_db = db_dir / "studio.db"
     for suffix in ("", "-wal", "-shm"):
+        (data_dir / f"studio.db{suffix}").unlink(missing_ok=True)
         (db_dir / f"studio.db{suffix}").unlink(missing_ok=True)
 
     object_root = data_dir / "objects" / "sha256"

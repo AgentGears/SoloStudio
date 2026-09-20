@@ -22,9 +22,9 @@ class SupervisedMediaWorker:
             raise InvalidCommand("worker command must not be empty")
         with self._lock:
             temp_dir = self.jobs.start_attempt(attempt_id, "local-media-worker")
-            request = self.jobs.request_payload(attempt_id)
-            (temp_dir / "request.json").write_text(canonical_text(request), encoding="utf-8")
             try:
+                request = self.jobs.request_payload(attempt_id)
+                (temp_dir / "request.json").write_text(canonical_text(request), encoding="utf-8")
                 completed = subprocess.run(
                     list(command),
                     cwd=temp_dir,
@@ -35,12 +35,21 @@ class SupervisedMediaWorker:
                     check=False,
                     timeout=timeout_seconds,
                 )
-            except subprocess.TimeoutExpired as exc:
+            except subprocess.TimeoutExpired:
                 job_state = self.jobs.fail_attempt(
                     attempt_id,
                     "WORKER_TIMEOUT",
                     f"worker exceeded timeout of {timeout_seconds} seconds",
                 )
+                return WorkerRunResult(
+                    self.jobs.attempt(attempt_id)["job_id"],
+                    attempt_id,
+                    "FAILED",
+                    job_state,
+                    -1,
+                )
+            except OSError as exc:
+                job_state = self.jobs.fail_attempt(attempt_id, "WORKER_START_FAILED", str(exc))
                 return WorkerRunResult(
                     self.jobs.attempt(attempt_id)["job_id"],
                     attempt_id,
