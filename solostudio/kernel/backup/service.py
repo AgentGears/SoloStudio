@@ -220,8 +220,56 @@ def _verify_database(database_path: Path) -> None:
         foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
         if foreign_keys:
             raise BackupVerificationFailed("database foreign-key check failed")
+        _verify_variant_lineage(connection)
     finally:
         connection.close()
+
+
+def _verify_variant_lineage(connection: sqlite3.Connection) -> None:
+    tables = {
+        str(row[0])
+        for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if "delivery_variants" not in tables:
+        return
+
+    invalid_variant = connection.execute(
+        """
+        SELECT 1
+        FROM delivery_variants v
+        LEFT JOIN production_revisions r ON r.id=v.source_revision_id
+        LEFT JOIN delivery_variants p ON p.id=v.parent_variant_id
+        WHERE r.id IS NULL
+           OR r.production_id <> v.production_id
+           OR (v.parent_variant_id IS NOT NULL AND (
+                p.id IS NULL OR p.production_id <> v.production_id
+           ))
+        LIMIT 1
+        """
+    ).fetchone()
+    if invalid_variant:
+        raise BackupVerificationFailed("database DeliveryVariant lineage check failed")
+
+    for table in ("artifacts", "job_specs"):
+        if table not in tables:
+            continue
+        invalid_reference = connection.execute(
+            f"""
+            SELECT 1
+            FROM {table} x
+            LEFT JOIN delivery_variants v ON v.id=x.variant_id
+            WHERE x.variant_id IS NOT NULL
+              AND (
+                    v.id IS NULL
+                 OR x.production_revision_id IS NULL
+                 OR v.production_id <> x.production_id
+                 OR v.source_revision_id <> x.production_revision_id
+              )
+            LIMIT 1
+            """
+        ).fetchone()
+        if invalid_reference:
+            raise BackupVerificationFailed(f"database {table} variant-lineage check failed")
 
 
 def _hash_file_required(path: Path, label: str) -> tuple[str, int]:
