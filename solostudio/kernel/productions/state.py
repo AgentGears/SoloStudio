@@ -133,7 +133,7 @@ def _dict_input(command_input: dict[str, Any], name: str) -> dict[str, Any]:
 
 
 def _validate_brief(brief: dict[str, Any]) -> None:
-    if not isinstance(brief["duration_min_ms"], int) or not isinstance(brief["duration_max_ms"], int):
+    if type(brief["duration_min_ms"]) is not int or type(brief["duration_max_ms"]) is not int:
         raise InvalidCommand("duration values must be integer milliseconds")
     if brief["duration_min_ms"] < 0 or brief["duration_max_ms"] < brief["duration_min_ms"]:
         raise InvalidCommand("duration range is invalid")

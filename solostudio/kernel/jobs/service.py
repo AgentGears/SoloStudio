@@ -11,9 +11,10 @@ from solostudio.kernel.store import KernelStore
 from solostudio.kernel.jobs.admission import AdmissionMixin
 from solostudio.kernel.jobs.execution import ExecutionMixin
 from solostudio.kernel.jobs.recovery import RecoveryMixin
+from solostudio.kernel.jobs.safety import SafeExecutionMixin
 
 
-class JobService(AdmissionMixin, ExecutionMixin, RecoveryMixin):
+class JobService(SafeExecutionMixin, AdmissionMixin, ExecutionMixin, RecoveryMixin):
     def __init__(
         self,
         data_dir: Path,
