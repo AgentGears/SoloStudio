@@ -22,8 +22,12 @@ class SupervisedMediaWorker:
             raise InvalidCommand("worker command must not be empty")
         with self._lock:
             temp_dir = self.jobs.start_attempt(attempt_id, "local-media-worker")
+            billing_ambiguous_on_interrupt = False
             try:
                 request = self.jobs.request_payload(attempt_id)
+                billing_ambiguous_on_interrupt = bool(
+                    request.get("route", {}).get("billing_ambiguity_on_interrupt", False)
+                )
                 (temp_dir / "request.json").write_text(canonical_text(request), encoding="utf-8")
                 completed = subprocess.run(
                     list(command),
@@ -40,6 +44,7 @@ class SupervisedMediaWorker:
                     attempt_id,
                     "WORKER_TIMEOUT",
                     f"worker exceeded timeout of {timeout_seconds} seconds",
+                    billing_ambiguous=billing_ambiguous_on_interrupt,
                 )
                 return WorkerRunResult(
                     self.jobs.attempt(attempt_id)["job_id"],
