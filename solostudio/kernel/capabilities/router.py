@@ -24,6 +24,30 @@ _ROUTES: dict[str, dict[str, Any]] = {
         "estimated_cost_microunits": 0,
         "billing_ambiguity_on_interrupt": False,
     },
+    "speech.synthesize": {
+        "route_id": "route_speech_synthesize_v1",
+        "provider": "builtin_deterministic",
+        "model": "deterministic-wave-v1",
+        "tool_profile": "artifact-provider-v1",
+        "estimated_cost_microunits": 0,
+        "billing_ambiguity_on_interrupt": False,
+    },
+    "captions.generate": {
+        "route_id": "route_captions_generate_v1",
+        "provider": "builtin_deterministic",
+        "model": "deterministic-vtt-v1",
+        "tool_profile": "artifact-provider-v1",
+        "estimated_cost_microunits": 0,
+        "billing_ambiguity_on_interrupt": False,
+    },
+    "image.generate": {
+        "route_id": "route_image_generate_v1",
+        "provider": "builtin_deterministic",
+        "model": "deterministic-png-v1",
+        "tool_profile": "artifact-provider-v1",
+        "estimated_cost_microunits": 0,
+        "billing_ambiguity_on_interrupt": False,
+    },
 }
 
 

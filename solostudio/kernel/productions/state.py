@@ -3,6 +3,11 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from solostudio.definitions import (
+    caption_style_identity,
+    visual_style_identity,
+    voice_profile_identity,
+)
 from solostudio.kernel.errors import InvalidCommand
 
 
@@ -121,7 +126,51 @@ def revision_payload(state: dict[str, Any], production_type: str = PRODUCTION_TY
         "captions": deepcopy(state["captions"]),
         "visual_plan": deepcopy(state["visual_plan"]),
         "composition_preferences": deepcopy(state["composition_preferences"]),
-        "captured_defaults": {},
+        "captured_defaults": _captured_defaults(state),
+    }
+
+
+def _captured_defaults(state: dict[str, Any]) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+
+    script = state.get("script", {}).get("text", "") if isinstance(state.get("script"), dict) else ""
+    if isinstance(script, str) and script:
+        voice = state.get("voice")
+        if isinstance(voice, dict):
+            captured["voice_profile"] = _definition_snapshot(
+                voice.get("voice_profile_ref"),
+                voice_profile_identity,
+            )
+        captions = state.get("captions")
+        if isinstance(captions, dict) and captions.get("enabled", True) is True:
+            captured["caption_style"] = _definition_snapshot(
+                captions.get("style_preset_ref"),
+                caption_style_identity,
+            )
+
+    visual_plan = state.get("visual_plan")
+    if isinstance(visual_plan, list) and visual_plan:
+        captured["visual_style"] = _definition_snapshot("default", visual_style_identity)
+
+    return captured
+
+
+def _definition_snapshot(reference: Any, resolver: Any) -> dict[str, Any]:
+    stored_reference = "default" if reference is None else deepcopy(reference)
+    try:
+        identity = resolver(reference)
+    except InvalidCommand:
+        return {
+            "reference": stored_reference,
+            "definition_id": None,
+            "content_hash": None,
+            "resolved": False,
+        }
+    return {
+        "reference": stored_reference,
+        "definition_id": identity["definition_id"],
+        "content_hash": identity["content_hash"],
+        "resolved": True,
     }
 
 
