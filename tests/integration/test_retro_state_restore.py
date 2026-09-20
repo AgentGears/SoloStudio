@@ -79,6 +79,36 @@ class RetroStateRestoreTests(unittest.TestCase):
         self.kernel = bootstrap(self.root, clock=FixedClock(), ids=self.ids)
         self.assertEqual(self.kernel.productions.revision(revision.revision_id)["id"], revision.revision_id)
 
+
+    def test_same_kind_derivative_does_not_satisfy_capture_source_repair(self) -> None:
+        revision = self.captured_revision()
+        with self.kernel.store.write() as db:
+            db.execute(
+                "DELETE FROM artifacts WHERE production_revision_id = ? AND producer_stage = 'revision_capture'",
+                (revision.revision_id,),
+            )
+
+        derivative_id = self.kernel.artifacts.promote_and_register(
+            b"wrong derivative bytes",
+            production_id=self.production_id,
+            production_revision_id=revision.revision_id,
+            kind="script_text",
+            media_type="text/plain; charset=utf-8",
+            producer_stage="media_worker",
+        )
+
+        replay = self.capture(1, "capture-backfill-over-derivative")
+        self.assertEqual(replay.classification, "NO_CHANGE")
+        artifacts = self.kernel.artifacts.revision_artifacts(revision.revision_id, verify_bytes=True)
+        matching = [
+            item
+            for item in artifacts
+            if item["kind"] == "script_text" and item["producer_stage"] == "revision_capture"
+        ]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(self.kernel.artifacts.read_bytes(matching[0]["id"]), b"seed")
+        self.assertEqual(self.kernel.artifacts.read_bytes(derivative_id), b"wrong derivative bytes")
+
     def test_no_change_capture_backfills_missing_source_artifacts(self) -> None:
         revision = self.captured_revision()
         with self.kernel.store.write() as db:

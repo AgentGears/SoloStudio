@@ -26,15 +26,25 @@ class CaptureSourceRepairMixin:
             return
 
         with self.store.write() as db:
-            existing_kinds = {
-                str(row["kind"])
-                for row in db.execute(
-                    "SELECT kind FROM artifacts WHERE production_revision_id = ?",
-                    (revision_id,),
-                )
-            }
             for item in prepared:
-                if item.kind in existing_kinds:
+                expected_digest = item.object_record.digest_sha256
+                existing = db.execute(
+                    """
+                    SELECT 1
+                    FROM artifacts
+                    WHERE production_revision_id = ?
+                      AND variant_id IS NULL
+                      AND kind = ?
+                      AND media_type = ?
+                      AND object_digest = ?
+                      AND producer_stage = 'revision_capture'
+                      AND producer_job_id IS NULL
+                      AND producer_attempt_id IS NULL
+                    LIMIT 1
+                    """,
+                    (revision_id, item.kind, item.media_type, expected_digest),
+                ).fetchone()
+                if existing:
                     continue
                 artifact_id = self.artifacts.register_prepared_in_tx(
                     db,
@@ -48,9 +58,12 @@ class CaptureSourceRepairMixin:
                     "artifact",
                     artifact_id,
                     "CAPTURE_SOURCE_BACKFILLED",
-                    {"revision_id": revision_id, "kind": item.kind},
+                    {
+                        "revision_id": revision_id,
+                        "kind": item.kind,
+                        "object_digest": expected_digest,
+                    },
                 )
-                existing_kinds.add(item.kind)
 
     def _prepared_sources_from_revision(self, payload: dict[str, Any]) -> list[PreparedArtifact]:
         prepared: list[PreparedArtifact] = []
