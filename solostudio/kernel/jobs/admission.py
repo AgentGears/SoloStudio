@@ -76,26 +76,33 @@ class AdmissionMixin:
                 if str(revision["production_id"]) != production_id:
                     raise InvalidCommand("artifact job revision belongs to another production")
 
-            active = db.execute(
+            active_rows = list(db.execute(
                 """
-                SELECT id FROM job_specs
+                SELECT id,route_json FROM job_specs
                 WHERE production_id = ? AND semantic_capability = ? AND input_fingerprint = ?
                   AND state IN ('QUEUED','RUNNING')
-                ORDER BY created_at, id LIMIT 1
+                ORDER BY created_at, id
                 """,
                 (production_id, semantic_capability, input_fingerprint),
-            ).fetchone()
-            if active:
+            ))
+            for active in active_rows:
+                if str(active["route_json"]) != route_json:
+                    continue
+                cost_row = db.execute(
+                    """
+                    SELECT id,state,capability,estimated_microunits,reserved_microunits,unit
+                    FROM cost_ledger WHERE job_id=? ORDER BY created_at,id LIMIT 1
+                    """,
+                    (active["id"],),
+                ).fetchone()
+                if not self._cost_contract_matches(cost_row, cost_plan):
+                    continue
                 attempt = db.execute(
                     "SELECT id FROM attempts WHERE job_id = ? ORDER BY attempt_number DESC LIMIT 1",
                     (active["id"],),
                 ).fetchone()
                 if not attempt:
                     raise RuntimeError("active job has no attempt")
-                cost_row = db.execute(
-                    "SELECT id FROM cost_ledger WHERE job_id=? ORDER BY created_at,id LIMIT 1",
-                    (active["id"],),
-                ).fetchone()
                 return JobAdmission(
                     str(active["id"]),
                     str(attempt["id"]),
@@ -131,6 +138,19 @@ class AdmissionMixin:
                 "input_fingerprint": input_fingerprint,
             })
             return JobAdmission(job_id, attempt_id, False, cost_id)
+
+    @staticmethod
+    def _cost_contract_matches(cost_row: Any, cost_plan: CostPlan | None) -> bool:
+        if cost_plan is None:
+            return cost_row is None
+        if cost_row is None or cost_row["state"] != "RESERVED":
+            return False
+        return (
+            str(cost_row["capability"]) == cost_plan.capability
+            and int(cost_row["estimated_microunits"]) == cost_plan.estimated_microunits
+            and int(cost_row["reserved_microunits"]) == cost_plan.reserved_microunits
+            and str(cost_row["unit"]) == cost_plan.unit
+        )
 
     def job(self, job_id: str) -> dict[str, Any]:
         with self.store.read() as db:
