@@ -21,7 +21,7 @@ class JobAdmissionRecoveryTests(JobTestCase):
             job_class="STATE_PROPOSAL",
             job_type="SCRIPT_GENERATE",
             semantic_capability="script.generate",
-            spec={"prompt": "different but same complete fingerprint should dedupe"},
+            spec={"prompt": "draft"},
             route={"executor": "placeholder"},
             input_fingerprint="fp-1",
         )
