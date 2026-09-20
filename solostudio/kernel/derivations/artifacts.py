@@ -4,8 +4,11 @@ import io
 import json
 import re
 import struct
+import subprocess
+import tempfile
 import wave
 import zlib
+from pathlib import Path
 from typing import Any, Iterable
 
 from solostudio.kernel.artifacts import ArtifactService, PreparedArtifact
@@ -15,6 +18,7 @@ from solostudio.kernel.errors import (
     MissingRetainedArtifact,
     NotFound,
 )
+from solostudio.kernel.identity import canonical_text
 
 
 _VTT_TIMING = re.compile(
@@ -193,11 +197,141 @@ class DerivationArtifactService(ArtifactService):
             if not _valid_webvtt(text):
                 raise InvalidArtifact("caption_track is not a structurally valid WebVTT payload")
             return
-        if kind == "visual_image":
+        if kind in {"visual_image", "cover_image"}:
             if media_type != "image/png":
-                raise InvalidArtifact("visual_image requires PNG media type")
+                raise InvalidArtifact(f"{kind} requires PNG media type")
             if not _valid_png(payload):
-                raise InvalidArtifact("visual_image is not a structurally valid PNG payload")
+                raise InvalidArtifact(f"{kind} is not a structurally valid PNG payload")
+            return
+        if kind == "composition_spec":
+            if media_type != "application/json":
+                raise InvalidArtifact("composition_spec requires JSON media type")
+            try:
+                value = json.loads(payload.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise InvalidArtifact("composition_spec is not valid UTF-8 JSON") from exc
+            if canonical_text(value).encode("utf-8") != payload:
+                raise InvalidArtifact("composition_spec bytes must use canonical JSON")
+            if not _valid_composition_spec(value):
+                raise InvalidArtifact("composition_spec structure is invalid")
+            return
+        if kind == "rendered_video":
+            if media_type != "video/mp4":
+                raise InvalidArtifact("rendered_video requires MP4 media type")
+            if len(payload) < 1024:
+                raise InvalidArtifact("rendered_video is below the M0 minimum byte size")
+            with tempfile.NamedTemporaryFile(suffix=".mp4") as handle:
+                handle.write(payload)
+                handle.flush()
+                probe_media_file(Path(handle.name))
+            return
+
+
+def probe_media_file(path: Path) -> dict[str, Any]:
+    try:
+        completed = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_streams",
+                "-show_format",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise InvalidArtifact("media container validation could not run") from exc
+    if completed.returncode != 0:
+        raise InvalidArtifact("rendered media container does not decode")
+    try:
+        data = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise InvalidArtifact("media probe result is invalid") from exc
+    streams = data.get("streams")
+    format_info = data.get("format")
+    if not isinstance(streams, list) or not isinstance(format_info, dict):
+        raise InvalidArtifact("media probe result is incomplete")
+    video_streams = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "video"]
+    audio_streams = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "audio"]
+    if not video_streams:
+        raise InvalidArtifact("rendered media has no video stream")
+    if not audio_streams:
+        raise InvalidArtifact("rendered media has no audio stream")
+    video = video_streams[0]
+    try:
+        width = int(video.get("width"))
+        height = int(video.get("height"))
+        duration_seconds = float(format_info.get("duration"))
+        byte_size = int(format_info.get("size", path.stat().st_size))
+    except (TypeError, ValueError, OSError) as exc:
+        raise InvalidArtifact("media probe dimensions, duration, or size are invalid") from exc
+    if width < 1 or height < 1 or duration_seconds <= 0 or byte_size <= 0:
+        raise InvalidArtifact("media probe reported invalid dimensions, duration, or size")
+    return {
+        "validator": "ffprobe-v1",
+        "width": width,
+        "height": height,
+        "duration_ms": int(round(duration_seconds * 1000)),
+        "byte_size": byte_size,
+        "video_streams": len(video_streams),
+        "audio_streams": len(audio_streams),
+    }
+
+
+def _valid_composition_spec(value: Any) -> bool:
+    if not isinstance(value, dict) or value.get("schema_version") != 1:
+        return False
+    intent_hash = value.get("variant_intent_hash")
+    canvas = value.get("canvas")
+    duration_ms = value.get("duration_ms")
+    tracks = value.get("tracks")
+    if not _is_sha256(intent_hash) or not isinstance(canvas, dict) or type(duration_ms) is not int or duration_ms < 1:
+        return False
+    if set(canvas) != {"aspect_ratio", "width", "height", "fps"}:
+        return False
+    if (
+        not isinstance(canvas.get("aspect_ratio"), str)
+        or type(canvas.get("width")) is not int
+        or type(canvas.get("height")) is not int
+        or type(canvas.get("fps")) is not int
+        or canvas["width"] < 1
+        or canvas["height"] < 1
+        or canvas["fps"] < 1
+    ):
+        return False
+    if not isinstance(tracks, list):
+        return False
+    kinds = [track.get("kind") for track in tracks if isinstance(track, dict)]
+    if len(kinds) != len(tracks) or "voice" not in kinds or "visual" not in kinds:
+        return False
+    for track in tracks:
+        if track.get("kind") == "visual":
+            items = track.get("items")
+            if not isinstance(items, list):
+                return False
+            for item in items:
+                if not isinstance(item, dict) or not _is_sha256(item.get("object_digest")):
+                    return False
+        elif track.get("kind") in {"voice", "captions"}:
+            if not _is_sha256(track.get("object_digest")):
+                return False
+        else:
+            return False
+    return True
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
 
 
 def _valid_webvtt(text: str) -> bool:
