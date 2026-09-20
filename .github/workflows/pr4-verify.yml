@@ -1,0 +1,19 @@
+name: PR4 combined verification
+
+on:
+  push:
+    branches:
+      - m0-a-04-capability-cost-statejobs
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile
+        run: python -m compileall -q solostudio tests
+      - name: Full repository suite
+        run: python -m unittest discover -v
