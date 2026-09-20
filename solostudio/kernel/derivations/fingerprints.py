@@ -95,10 +95,107 @@ def image_generate(
     )
 
 
+def composition_compile(
+    *,
+    output_role: str,
+    semantic_inputs: dict[str, Any],
+    source_object_digests: dict[str, str],
+    route: dict[str, Any],
+) -> str:
+    if output_role != "composition.primary":
+        raise InvalidCommand("composition fingerprint requires the composition.primary output role")
+    if set(semantic_inputs) != {"variant_intent_hash", "composition_preferences"}:
+        raise InvalidCommand("composition fingerprint requires variant intent hash and composition preferences")
+    if not _is_sha256(semantic_inputs.get("variant_intent_hash")):
+        raise InvalidCommand("composition fingerprint variant intent hash is invalid")
+    if not isinstance(semantic_inputs.get("composition_preferences"), dict):
+        raise InvalidCommand("composition preferences must be an object")
+    if "voice" not in source_object_digests:
+        raise InvalidCommand("composition fingerprint requires voice Object digest")
+    _validate_digest_map(source_object_digests)
+    visual_keys = sorted(key for key in source_object_digests if key.startswith("visual."))
+    expected_visual_keys = [f"visual.{index:04d}" for index in range(len(visual_keys))]
+    if visual_keys != expected_visual_keys:
+        raise InvalidCommand("composition visual Object digests must be contiguous and ordered")
+    allowed = {"voice", "captions", *visual_keys}
+    if set(source_object_digests) != allowed:
+        raise InvalidCommand("composition fingerprint contains unsupported source Object roles")
+    return _build(
+        "composition.compile",
+        output_role=output_role,
+        semantic_inputs=semantic_inputs,
+        source_object_digests=source_object_digests,
+        route=route,
+    )
+
+
+def media_render(
+    *,
+    output_role: str,
+    semantic_inputs: dict[str, Any],
+    source_object_digests: dict[str, str],
+    route: dict[str, Any],
+) -> str:
+    if output_role != "render.primary":
+        raise InvalidCommand("media render fingerprint requires the render.primary output role")
+    if semantic_inputs:
+        raise InvalidCommand("media render fingerprint has no semantic inputs beyond the composition and route")
+    if set(source_object_digests) != {"composition_spec"}:
+        raise InvalidCommand("media render fingerprint requires exactly the composition_spec Object digest")
+    _validate_digest_map(source_object_digests)
+    return _build(
+        "media.render",
+        output_role=output_role,
+        semantic_inputs=semantic_inputs,
+        source_object_digests=source_object_digests,
+        route=route,
+    )
+
+
+def cover_produce(
+    *,
+    output_role: str,
+    semantic_inputs: dict[str, Any],
+    source_object_digests: dict[str, str],
+    route: dict[str, Any],
+) -> str:
+    if output_role != "cover.primary":
+        raise InvalidCommand("cover fingerprint requires the cover.primary output role")
+    if set(semantic_inputs) != {"cover_preferences"} or not isinstance(semantic_inputs["cover_preferences"], dict):
+        raise InvalidCommand("cover fingerprint requires cover preferences")
+    if set(source_object_digests) != {"selected_visual"}:
+        raise InvalidCommand("cover fingerprint requires exactly the selected visual Object digest")
+    _validate_digest_map(source_object_digests)
+    return _build(
+        "cover.produce",
+        output_role=output_role,
+        semantic_inputs=semantic_inputs,
+        source_object_digests=source_object_digests,
+        route=route,
+    )
+
+
+def _validate_digest_map(values: dict[str, str]) -> None:
+    for role, digest in values.items():
+        if not _is_sha256(digest):
+            raise InvalidCommand(f"invalid Object digest for fingerprint role: {role}")
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
+
+
 FINGERPRINT_PROJECTIONS: dict[str, Callable[..., str]] = {
     "speech.synthesize": speech_synthesize,
     "captions.generate": captions_generate,
     "image.generate": image_generate,
+    "composition.compile": composition_compile,
+    "media.render": media_render,
+    "cover.produce": cover_produce,
 }
 
 
