@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
 import struct
+import wave
 import zlib
 from typing import Any, Iterable
 
@@ -159,8 +161,17 @@ class DerivationArtifactService(ArtifactService):
         if kind == "voice_audio":
             if media_type != "audio/wav":
                 raise InvalidArtifact("voice_audio requires WAV media type")
-            if len(payload) < 44 or payload[:4] != b"RIFF" or payload[8:12] != b"WAVE":
-                raise InvalidArtifact("voice_audio is not a structurally valid WAV payload")
+            try:
+                with wave.open(io.BytesIO(payload), "rb") as wav:
+                    if (
+                        wav.getnchannels() < 1
+                        or wav.getsampwidth() < 1
+                        or wav.getframerate() < 1
+                        or wav.getnframes() < 1
+                    ):
+                        raise InvalidArtifact("voice_audio WAV stream is empty or malformed")
+            except (wave.Error, EOFError) as exc:
+                raise InvalidArtifact("voice_audio is not a decodable WAV payload") from exc
             return
         if kind == "caption_track":
             if media_type != "text/vtt; charset=utf-8":
@@ -169,8 +180,8 @@ class DerivationArtifactService(ArtifactService):
                 text = payload.decode("utf-8")
             except UnicodeDecodeError as exc:
                 raise InvalidArtifact("caption_track bytes are not valid UTF-8") from exc
-            if not text.startswith("WEBVTT\n"):
-                raise InvalidArtifact("caption_track must start with WEBVTT")
+            if not text.startswith("WEBVTT\n") or "-->" not in text:
+                raise InvalidArtifact("caption_track is not a structurally valid WebVTT payload")
             return
         if kind == "visual_image":
             if media_type != "image/png":
@@ -183,6 +194,8 @@ def _valid_png(payload: bytes) -> bool:
     if not payload.startswith(b"\x89PNG\r\n\x1a\n"):
         return False
     offset = 8
+    width = height = None
+    idat = bytearray()
     saw_ihdr = False
     while offset + 12 <= len(payload):
         length = struct.unpack(">I", payload[offset:offset + 4])[0]
@@ -199,8 +212,29 @@ def _valid_png(payload: bytes) -> bool:
         if not saw_ihdr:
             if chunk_type != b"IHDR" or length != 13:
                 return False
+            width, height, bit_depth, color_type, compression, filtering, interlace = struct.unpack(
+                ">IIBBBBB", data
+            )
+            if (
+                width < 1
+                or height < 1
+                or bit_depth != 8
+                or color_type != 2
+                or compression != 0
+                or filtering != 0
+                or interlace != 0
+            ):
+                return False
             saw_ihdr = True
-        if chunk_type == b"IEND":
-            return saw_ihdr and end == len(payload)
+        elif chunk_type == b"IDAT":
+            idat.extend(data)
+        elif chunk_type == b"IEND":
+            if length != 0 or not idat or width is None or height is None or end != len(payload):
+                return False
+            try:
+                raw = zlib.decompress(bytes(idat))
+            except zlib.error:
+                return False
+            return len(raw) == height * (1 + width * 3)
         offset = end
     return False
