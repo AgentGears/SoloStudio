@@ -16,6 +16,7 @@ from solostudio.kernel.jobs import JobService, SupervisedMediaWorker
 from solostudio.kernel.principals import AGENT_PRINCIPAL, SYSTEM_PRINCIPAL, USER_PRINCIPAL
 from solostudio.kernel.productions import ProductionService
 from solostudio.kernel.store import KernelStore
+from solostudio.kernel.variants import VariantPipelineService, VariantService
 
 
 @dataclass(slots=True)
@@ -30,6 +31,8 @@ class StudioKernel:
     jobs: JobService
     capabilities: CapabilityService
     derivations: DerivationService
+    variants: VariantService
+    variant_pipeline: VariantPipelineService
     worker: SupervisedMediaWorker
     user: KernelChannel
     agent: KernelChannel
@@ -59,6 +62,8 @@ def bootstrap(data_dir: str | Path, *, clock: Clock | None = None, ids: IdSource
     costs.recover_unbound_reservations()
     capabilities = CapabilityService(productions, jobs)
     derivations = DerivationService(productions, artifacts, jobs, capabilities.router)
+    variants = VariantService(store, active_clock, active_ids)
+    variant_pipeline = VariantPipelineService(productions, variants, derivations, artifacts, jobs)
     worker = SupervisedMediaWorker(jobs)
     backups = BackupService(root, store, objects, active_clock, active_ids)
     return StudioKernel(
@@ -72,6 +77,8 @@ def bootstrap(data_dir: str | Path, *, clock: Clock | None = None, ids: IdSource
         jobs,
         capabilities,
         derivations,
+        variants,
+        variant_pipeline,
         worker,
         KernelChannel(USER_PRINCIPAL, productions),
         KernelChannel(AGENT_PRINCIPAL, productions),
