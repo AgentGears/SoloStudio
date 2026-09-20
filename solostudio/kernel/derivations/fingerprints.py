@@ -117,7 +117,9 @@ def composition_compile(
     expected_visual_keys = [f"visual.{index:04d}" for index in range(len(visual_keys))]
     if visual_keys != expected_visual_keys:
         raise InvalidCommand("composition visual Object digests must be contiguous and ordered")
-    allowed = {"voice", "captions", *visual_keys}
+    allowed = {"voice", *visual_keys}
+    if "captions" in source_object_digests:
+        allowed.add("captions")
     if set(source_object_digests) != allowed:
         raise InvalidCommand("composition fingerprint contains unsupported source Object roles")
     return _build(
