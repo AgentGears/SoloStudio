@@ -30,8 +30,8 @@ class AdmissionMixin:
     ) -> JobAdmission:
         if job_class not in JOB_CLASSES:
             raise InvalidCommand(f"unsupported job class: {job_class}")
-        if max_attempts < 1:
-            raise InvalidCommand("max_attempts must be at least 1")
+        if type(max_attempts) is not int or max_attempts < 1:
+            raise InvalidCommand("max_attempts must be a positive integer")
         if not job_type or not semantic_capability or not input_fingerprint:
             raise InvalidCommand("job type, capability, and input fingerprint are required")
         if cost_plan is not None and cost_plan.capability != semantic_capability:
@@ -78,7 +78,7 @@ class AdmissionMixin:
 
             active_rows = list(db.execute(
                 """
-                SELECT id,route_json FROM job_specs
+                SELECT id,route_json,max_attempts FROM job_specs
                 WHERE production_id = ? AND semantic_capability = ? AND input_fingerprint = ?
                   AND state IN ('QUEUED','RUNNING')
                 ORDER BY created_at, id
@@ -87,6 +87,8 @@ class AdmissionMixin:
             ))
             for active in active_rows:
                 if str(active["route_json"]) != route_json:
+                    continue
+                if int(active["max_attempts"]) != max_attempts:
                     continue
                 cost_row = db.execute(
                     """
