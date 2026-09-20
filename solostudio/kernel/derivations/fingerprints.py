@@ -165,6 +165,8 @@ def cover_produce(
         raise InvalidCommand("cover fingerprint requires the cover.primary output role")
     if set(semantic_inputs) != {"cover_preferences"} or not isinstance(semantic_inputs["cover_preferences"], dict):
         raise InvalidCommand("cover fingerprint requires cover preferences")
+    if semantic_inputs["cover_preferences"]:
+        raise InvalidCommand("non-empty cover preferences are unsupported by the M0 deterministic cover provider")
     if set(source_object_digests) != {"selected_visual"}:
         raise InvalidCommand("cover fingerprint requires exactly the selected visual Object digest")
     _validate_digest_map(source_object_digests)
