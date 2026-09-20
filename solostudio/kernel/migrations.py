@@ -301,4 +301,40 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         END;
         """,
     ),
+    (
+        7,
+        """
+        CREATE TRIGGER delivery_variants_lineage_insert
+        BEFORE INSERT ON delivery_variants
+        WHEN NOT EXISTS (
+            SELECT 1 FROM production_revisions r
+            WHERE r.id = NEW.source_revision_id
+              AND r.production_id = NEW.production_id
+        )
+        OR (
+            NEW.parent_variant_id IS NOT NULL
+            AND NOT EXISTS (
+                SELECT 1 FROM delivery_variants p
+                WHERE p.id = NEW.parent_variant_id
+                  AND p.production_id = NEW.production_id
+            )
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'delivery variant lineage violation');
+        END;
+
+        CREATE TRIGGER delivery_variants_material_immutable
+        BEFORE UPDATE OF production_id,source_revision_id,parent_variant_id,variant_type,intent_json,intent_hash
+        ON delivery_variants
+        WHEN NEW.production_id IS NOT OLD.production_id
+          OR NEW.source_revision_id IS NOT OLD.source_revision_id
+          OR NEW.parent_variant_id IS NOT OLD.parent_variant_id
+          OR NEW.variant_type IS NOT OLD.variant_type
+          OR NEW.intent_json IS NOT OLD.intent_json
+          OR NEW.intent_hash IS NOT OLD.intent_hash
+        BEGIN
+            SELECT RAISE(ABORT, 'delivery variant material identity is immutable');
+        END;
+        """,
+    ),
 )
