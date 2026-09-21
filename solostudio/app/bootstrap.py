@@ -11,7 +11,7 @@ from solostudio.kernel.capabilities import CapabilityService
 from solostudio.kernel.clock import Clock, SystemClock
 from solostudio.kernel.costs import CostService
 from solostudio.kernel.derivations import DerivationArtifactService, DerivationService
-from solostudio.kernel.derivations.m0_authority import M0ArtifactAuthorityService
+from solostudio.kernel.derivations.final_authority import Slice8ArtifactAuthorityService
 from solostudio.kernel.ids import IdSource, RandomIdSource
 from solostudio.kernel.jobs import JobService, SupervisedMediaWorker
 from solostudio.kernel.principals import AGENT_PRINCIPAL, SYSTEM_PRINCIPAL, USER_PRINCIPAL
@@ -55,7 +55,7 @@ def bootstrap(data_dir: str | Path, *, clock: Clock | None = None, ids: IdSource
 
     store = KernelStore(root / "db" / "studio.db", active_clock)
     objects = ObjectStore(root)
-    artifacts = M0ArtifactAuthorityService(store, objects, active_clock, active_ids)
+    artifacts = Slice8ArtifactAuthorityService(store, objects, active_clock, active_ids)
     productions = ProductionService(store, active_clock, active_ids, artifacts)
     costs = CostService(store, active_clock, active_ids)
     jobs = JobService(root, store, artifacts, productions, costs, active_clock, active_ids)
