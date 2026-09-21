@@ -622,34 +622,35 @@ def _expected_derivation_requirements(
             ),
         )
 
-    visual_style = _captured_definition_identity(
-        captured_defaults,
-        "visual_style",
-        "visual style",
-        expected_reference="default",
-    )
-    image_route = router.qualify("image.generate", execution_mode=execution_mode)
-    seen: set[str] = set()
-    for index, item in enumerate(visual_plan):
-        if not isinstance(item, dict):
-            raise InvalidArtifact("captured visual plan items must be objects")
-        item_id = item.get("item_id")
-        if not isinstance(item_id, str) or not item_id or item_id in seen:
-            raise InvalidArtifact("captured visual plan item_id values must be unique non-empty strings")
-        seen.add(item_id)
-        result[f"visual.{index:04d}"] = (
-            "visual_image",
-            _safe_expected_fingerprint(
-                "image.generate",
-                output_role=f"visual.{item_id}",
-                semantic_inputs={
-                    "visual_plan_item_hash": canonical_hash(item),
-                    "visual_style": visual_style,
-                },
-                source_object_digests={},
-                route=image_route,
-            ),
+    if visual_plan:
+        visual_style = _captured_definition_identity(
+            captured_defaults,
+            "visual_style",
+            "visual style",
+            expected_reference="default",
         )
+        image_route = router.qualify("image.generate", execution_mode=execution_mode)
+        seen: set[str] = set()
+        for index, item in enumerate(visual_plan):
+            if not isinstance(item, dict):
+                raise InvalidArtifact("captured visual plan items must be objects")
+            item_id = item.get("item_id")
+            if not isinstance(item_id, str) or not item_id or item_id in seen:
+                raise InvalidArtifact("captured visual plan item_id values must be unique non-empty strings")
+            seen.add(item_id)
+            result[f"visual.{index:04d}"] = (
+                "visual_image",
+                _safe_expected_fingerprint(
+                    "image.generate",
+                    output_role=f"visual.{item_id}",
+                    semantic_inputs={
+                        "visual_plan_item_hash": canonical_hash(item),
+                        "visual_style": visual_style,
+                    },
+                    source_object_digests={},
+                    route=image_route,
+                ),
+            )
     return result
 
 
