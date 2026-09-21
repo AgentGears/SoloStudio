@@ -181,3 +181,94 @@ class Slice8ExactHeadAuthorityTests(JobTestCase):
         self.assertEqual(voice_plan.disposition, "REUSED_ARTIFACT")
         self.assertEqual(voice_plan.artifact_id, unscoped_voice_id)
         self.assertNotEqual(voice_plan.artifact_id, scoped_voice_id)
+
+    def test_composition_registration_rejects_duration_not_selected_by_compiler(self) -> None:
+        revision = self.capture_revision()
+        voice_id = self._materialize_voice(revision.revision_id, variant_id=None)
+        voice = self.kernel.artifacts.artifact(voice_id, verify_bytes=True)
+        revision_row = self.kernel.productions.revision(revision.revision_id)
+        revision_payload = json.loads(str(revision_row["canonical_json"]))
+
+        intent = self._intent()
+        variant_id = self.kernel.variants.create(
+            production_id=self.production_id,
+            source_revision_id=revision.revision_id,
+            intent=intent,
+        )
+        variant = self.kernel.variants.variant(variant_id)
+        route = self.kernel.capabilities.router.qualify(
+            "composition.compile",
+            execution_mode="PRIVATE",
+        )
+        semantic_inputs = {
+            "variant_intent_hash": str(variant["intent_hash"]),
+            "composition_preferences": revision_payload["composition_preferences"],
+        }
+        source_digests = {"voice": str(voice["object_digest"])}
+        fingerprint = expected_fingerprint(
+            "composition.compile",
+            output_role="composition.primary",
+            semantic_inputs=semantic_inputs,
+            source_object_digests=source_digests,
+            route=route,
+        )
+        admission = self.kernel.jobs.admit(
+            production_id=self.production_id,
+            production_revision_id=revision.revision_id,
+            variant_id=variant_id,
+            job_class="ARTIFACT",
+            job_type="COMPOSITION_COMPILE",
+            semantic_capability="composition.compile",
+            spec={
+                "schema_version": 1,
+                "execution_mode": "PRIVATE",
+                "output_role": "composition.primary",
+                "kind": "composition_spec",
+                "media_type": "application/json",
+                "filename": "composition.json",
+                "semantic_inputs": semantic_inputs,
+                "source_object_digests": source_digests,
+                "source_artifacts": [{"artifact_id": voice_id, "role": "voice"}],
+            },
+            route=route,
+            input_fingerprint=fingerprint,
+            max_attempts=1,
+        )
+        composition = {
+            "schema_version": 1,
+            "variant_intent_hash": str(variant["intent_hash"]),
+            "composition_preferences": revision_payload["composition_preferences"],
+            "canvas": self.kernel.variants.canvas(intent),
+            "duration_ms": 1500,
+            "tracks": [
+                {"kind": "visual", "items": []},
+                {"kind": "voice", "object_digest": str(voice["object_digest"])},
+            ],
+        }
+        temp_dir = self.kernel.jobs.start_attempt(
+            admission.attempt_id,
+            "deterministic-artifact-provider",
+        )
+        (temp_dir / "composition.json").write_bytes(
+            canonical_text(composition).encode("utf-8")
+        )
+
+        with self.assertRaisesRegex(InvalidArtifact, "deterministic compiler selection"):
+            self.kernel.jobs.complete_artifact_attempt(
+                admission.attempt_id,
+                [
+                    {
+                        "role": "composition.primary",
+                        "path": "composition.json",
+                        "kind": "composition_spec",
+                        "media_type": "application/json",
+                        "producer_stage": "duration-authority-test",
+                    }
+                ],
+            )
+        self.kernel.jobs.fail_attempt(
+            admission.attempt_id,
+            "EXPECTED_TEST_FAILURE",
+            "composition duration must match deterministic compiler output",
+        )
+        self.assertEqual(self.kernel.variants.variant(variant_id)["state"], "PROPOSED")
