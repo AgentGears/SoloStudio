@@ -30,7 +30,7 @@ _MP4_BRANDS = {
 
 
 class VariantArtifactAuthorityService(DerivationArtifactService):
-    """Adds Slice 8 composition/render authority checks at Artifact registration."""
+    """Adds Slice 8 composition/render/cover authority checks at Artifact registration."""
 
     def prepare_bytes(
         self,
@@ -82,6 +82,15 @@ class VariantArtifactAuthorityService(DerivationArtifactService):
             )
         elif prepared.kind == "rendered_video":
             self._validate_render_source_authority(
+                db,
+                prepared,
+                production_id=production_id,
+                production_revision_id=production_revision_id,
+                variant_id=variant_id,
+                producer_job_id=producer_job_id,
+            )
+        elif prepared.kind == "cover_image":
+            self._validate_cover_registration(
                 db,
                 prepared,
                 production_id=production_id,
@@ -159,6 +168,9 @@ class VariantArtifactAuthorityService(DerivationArtifactService):
             media_type="video/mp4",
             filename="render.mp4",
         )
+        expected_route = self._qualified_route("media.render", spec)
+        if job["route"] != expected_route:
+            raise InvalidArtifact("media.render route does not match the qualified route")
         if spec.get("semantic_inputs") != {}:
             raise InvalidArtifact("media.render semantic inputs must be empty")
 
@@ -189,7 +201,7 @@ class VariantArtifactAuthorityService(DerivationArtifactService):
             output_role="render.primary",
             semantic_inputs={},
             source_object_digests=source_digests,
-            route=job["route"],
+            route=expected_route,
         )
         if str(job["input_fingerprint"]) != expected or prepared.input_fingerprint != expected:
             raise InvalidArtifact("media.render fingerprint does not match the bound composition source")
@@ -239,6 +251,87 @@ class VariantArtifactAuthorityService(DerivationArtifactService):
                 "rendered_video duration does not match the bound composition within muxing tolerance"
             )
 
+    def _validate_cover_registration(
+        self,
+        db: Any,
+        prepared: PreparedArtifact,
+        *,
+        production_id: str,
+        production_revision_id: str | None,
+        variant_id: str | None,
+        producer_job_id: str | None,
+    ) -> None:
+        if production_revision_id is None or producer_job_id is None or variant_id is not None:
+            raise InvalidArtifact("cover_image requires unscoped revision and producer JobSpec lineage")
+        job = self._job_authority(db, producer_job_id)
+        if (
+            str(job["production_id"]) != production_id
+            or job["production_revision_id"] != production_revision_id
+            or job["variant_id"] is not None
+            or job["job_class"] != "ARTIFACT"
+            or job["job_type"] != "COVER_PRODUCE"
+            or job["semantic_capability"] != "cover.produce"
+        ):
+            raise InvalidArtifact("cover_image producer job does not hold cover-copy authority")
+        spec = job["spec"]
+        self._validate_output_contract(
+            spec,
+            role="cover.primary",
+            kind="cover_image",
+            media_type="image/png",
+            filename="cover.png",
+        )
+        expected_route = self._qualified_route("cover.produce", spec)
+        if job["route"] != expected_route:
+            raise InvalidArtifact("cover.produce route does not match the qualified route")
+
+        source_entries = spec.get("source_artifacts")
+        if (
+            not isinstance(source_entries, list)
+            or len(source_entries) != 1
+            or not isinstance(source_entries[0], dict)
+            or source_entries[0].get("role") != "selected_visual"
+            or not isinstance(source_entries[0].get("artifact_id"), str)
+            or not source_entries[0]["artifact_id"]
+        ):
+            raise InvalidArtifact("cover.produce requires exactly one bound selected_visual Artifact")
+        source = self._artifact_authority(db, str(source_entries[0]["artifact_id"]))
+        if (
+            str(source["production_id"]) != production_id
+            or source["production_revision_id"] != production_revision_id
+            or source["kind"] != "visual_image"
+        ):
+            raise InvalidArtifact("cover.produce source is not the bound selected visual")
+
+        semantic_inputs = spec.get("semantic_inputs")
+        if not isinstance(semantic_inputs, dict):
+            raise InvalidArtifact("cover.produce semantic inputs must be an object")
+        source_digests = {"selected_visual": str(source["object_digest"])}
+        if spec.get("source_object_digests") != source_digests:
+            raise InvalidArtifact("cover.produce source digest does not match the selected visual Artifact")
+        expected = self._expected_fingerprint(
+            "cover.produce",
+            output_role="cover.primary",
+            semantic_inputs=semantic_inputs,
+            source_object_digests=source_digests,
+            route=expected_route,
+        )
+        if str(job["input_fingerprint"]) != expected or prepared.input_fingerprint != expected:
+            raise InvalidArtifact("cover.produce fingerprint does not match the selected visual context")
+
+        cover_payload = self.objects.read_bytes(
+            prepared.object_record.digest_sha256,
+            prepared.object_record.byte_size,
+            prepared.object_record.object_relpath,
+        )
+        source_payload = self.objects.read_bytes(
+            str(source["object_digest"]),
+            int(source["byte_size"]),
+            str(source["object_relpath"]),
+        )
+        if cover_payload != source_payload:
+            raise InvalidArtifact("cover-copy output bytes do not match the bound selected visual")
+
     def _validate_composition_job(
         self,
         db: Any,
@@ -267,6 +360,9 @@ class VariantArtifactAuthorityService(DerivationArtifactService):
             media_type="application/json",
             filename="composition.json",
         )
+        expected_route = self._qualified_route("composition.compile", spec)
+        if job["route"] != expected_route:
+            raise InvalidArtifact("composition.compile route does not match the qualified route")
 
         variant, revision_payload = self._variant_context(
             db,
@@ -333,7 +429,7 @@ class VariantArtifactAuthorityService(DerivationArtifactService):
             output_role="composition.primary",
             semantic_inputs=semantic_inputs,
             source_object_digests=source_digests,
-            route=job["route"],
+            route=expected_route,
         )
         if str(job["input_fingerprint"]) != expected or artifact_input_fingerprint != expected:
             raise InvalidArtifact("composition fingerprint does not match authoritative bound sources")
@@ -423,6 +519,16 @@ class VariantArtifactAuthorityService(DerivationArtifactService):
             or spec.get("filename") != filename
         ):
             raise InvalidArtifact("Artifact JobSpec output contract does not match its capability")
+
+    @staticmethod
+    def _qualified_route(capability: str, spec: dict[str, Any]) -> dict[str, Any]:
+        execution_mode = spec.get("execution_mode")
+        if not isinstance(execution_mode, str):
+            raise InvalidArtifact(f"{capability} JobSpec execution mode is invalid")
+        try:
+            return CapabilityRouter().qualify(capability, execution_mode=execution_mode)
+        except InvalidCommand as exc:
+            raise InvalidArtifact(f"{capability} JobSpec execution mode is not qualified") from exc
 
     @staticmethod
     def _validate_composition_payload(
