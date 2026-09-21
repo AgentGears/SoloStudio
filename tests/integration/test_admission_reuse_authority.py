@@ -60,6 +60,73 @@ class AdmissionReuseAuthorityTests(JobTestCase):
         self.assertEqual(self.kernel.jobs.job(one_attempt.job_id)["max_attempts"], 1)
         self.assertEqual(self.kernel.jobs.job(two_attempts.job_id)["max_attempts"], 2)
 
+    def test_active_reuse_requires_exact_spec_identity(self) -> None:
+        common = {
+            "production_id": self.production_id,
+            "job_class": "STATE_PROPOSAL",
+            "job_type": "SCRIPT_GENERATE",
+            "semantic_capability": "text.generate",
+            "route": {"provider": "local", "execution_mode": "PRIVATE"},
+            "input_fingerprint": "same-projection-different-spec",
+        }
+        first = self.kernel.jobs.admit(
+            **common,
+            spec={"execution_mode": "PRIVATE", "projection": {"topic": "alpha"}},
+        )
+        different = self.kernel.jobs.admit(
+            **common,
+            spec={"execution_mode": "PRIVATE", "projection": {"topic": "beta"}},
+        )
+        replay = self.kernel.jobs.admit(
+            **common,
+            spec={"execution_mode": "PRIVATE", "projection": {"topic": "alpha"}},
+        )
+
+        self.assertFalse(first.reused)
+        self.assertFalse(different.reused)
+        self.assertNotEqual(first.job_id, different.job_id)
+        self.assertTrue(replay.reused)
+        self.assertEqual(replay.job_id, first.job_id)
+
+    def test_active_artifact_reuse_does_not_cross_revision_job_lineage(self) -> None:
+        revision1 = self.capture_revision()
+        self.kernel.user.command(
+            production_id=self.production_id,
+            expected_state_version=1,
+            idempotency_key="admission-r2",
+            action="set_script",
+            command_input={"text": "changed"},
+        )
+        revision2 = self.kernel.user.capture_revision(
+            production_id=self.production_id,
+            expected_state_version=2,
+            idempotency_key="admission-capture-r2",
+        )
+        route = self.kernel.capabilities.router.qualify("speech.synthesize", execution_mode="PRIVATE")
+        common = {
+            "production_id": self.production_id,
+            "job_class": "ARTIFACT",
+            "job_type": "VOICE_SYNTHESIZE",
+            "semantic_capability": "speech.synthesize",
+            "spec": {"schema_version": 1, "execution_mode": "PRIVATE"},
+            "route": route,
+            "input_fingerprint": "d" * 64,
+        }
+        first = self.kernel.jobs.admit(
+            **common,
+            production_revision_id=revision1.revision_id,
+        )
+        second = self.kernel.jobs.admit(
+            **common,
+            production_revision_id=revision2.revision_id,
+        )
+
+        self.assertFalse(first.reused)
+        self.assertFalse(second.reused)
+        self.assertNotEqual(first.job_id, second.job_id)
+        self.assertEqual(self.kernel.jobs.job(first.job_id)["production_revision_id"], revision1.revision_id)
+        self.assertEqual(self.kernel.jobs.job(second.job_id)["production_revision_id"], revision2.revision_id)
+
     def test_max_attempts_requires_strict_positive_integer(self) -> None:
         with self.assertRaises(InvalidCommand):
             self.kernel.jobs.admit(

@@ -61,17 +61,38 @@ class ArtifactService:
             prepared.object_record.object_relpath,
         )
         if production_revision_id is not None:
-            revision = db.execute("SELECT production_id FROM production_revisions WHERE id = ?", (production_revision_id,)).fetchone()
+            revision = db.execute(
+                "SELECT production_id FROM production_revisions WHERE id = ?",
+                (production_revision_id,),
+            ).fetchone()
             if not revision:
                 raise NotFound(f"revision not found: {production_revision_id}")
             if str(revision["production_id"]) != production_id:
                 raise InvalidArtifact("artifact revision must belong to the same production")
+        if variant_id is not None:
+            variant = db.execute(
+                "SELECT production_id,source_revision_id FROM delivery_variants WHERE id=?",
+                (variant_id,),
+            ).fetchone()
+            if not variant:
+                raise NotFound(f"variant not found: {variant_id}")
+            if str(variant["production_id"]) != production_id:
+                raise InvalidArtifact("artifact variant must belong to the same production")
+            if production_revision_id is None or str(variant["source_revision_id"]) != production_revision_id:
+                raise InvalidArtifact("artifact variant must agree with its captured source revision")
         if producer_job_id is not None:
-            job = db.execute("SELECT production_id FROM job_specs WHERE id = ?", (producer_job_id,)).fetchone()
+            job = db.execute(
+                "SELECT production_id,production_revision_id,variant_id FROM job_specs WHERE id = ?",
+                (producer_job_id,),
+            ).fetchone()
             if not job:
                 raise NotFound(f"job not found: {producer_job_id}")
             if str(job["production_id"]) != production_id:
                 raise InvalidArtifact("artifact job must belong to the same production")
+            if job["production_revision_id"] != production_revision_id:
+                raise InvalidArtifact("artifact revision must match producer job lineage")
+            if job["variant_id"] != variant_id:
+                raise InvalidArtifact("artifact variant must match producer job lineage")
         if producer_attempt_id is not None:
             if producer_job_id is None:
                 raise InvalidArtifact("producer attempt requires producer job")
@@ -94,7 +115,11 @@ class ArtifactService:
             "SELECT byte_size,object_relpath FROM objects WHERE digest_sha256 = ?",
             (prepared.object_record.digest_sha256,),
         ).fetchone()
-        if not object_row or int(object_row["byte_size"]) != prepared.object_record.byte_size or object_row["object_relpath"] != prepared.object_record.object_relpath:
+        if (
+            not object_row
+            or int(object_row["byte_size"]) != prepared.object_record.byte_size
+            or object_row["object_relpath"] != prepared.object_record.object_relpath
+        ):
             raise InvalidArtifact("object registration metadata does not match retained bytes")
 
         artifact_id = self.ids.new("art")
@@ -154,7 +179,13 @@ class ArtifactService:
                 production_revision_id=production_revision_id,
                 dependencies=dependencies,
             )
-            self._journal(db, production_id, artifact_id, "ARTIFACT_REGISTERED", {"kind": kind, "object_digest": prepared.object_record.digest_sha256})
+            self._journal(
+                db,
+                production_id,
+                artifact_id,
+                "ARTIFACT_REGISTERED",
+                {"kind": kind, "object_digest": prepared.object_record.digest_sha256},
+            )
             return artifact_id
 
     def artifact(self, artifact_id: str, *, verify_bytes: bool = False) -> dict[str, Any]:
@@ -171,18 +202,32 @@ class ArtifactService:
                 raise NotFound(f"artifact not found: {artifact_id}")
             result = dict(row)
         if verify_bytes:
-            self.objects.verify(str(result["object_digest"]), int(result["byte_size"]), str(result["object_relpath"]))
+            self.objects.verify(
+                str(result["object_digest"]),
+                int(result["byte_size"]),
+                str(result["object_relpath"]),
+            )
         result["metadata"] = json.loads(result.pop("metadata_json"))
         return result
 
     def revision_artifacts(self, revision_id: str, *, verify_bytes: bool = False) -> list[dict[str, Any]]:
         with self.store.read() as db:
-            ids = [str(row["id"]) for row in db.execute("SELECT id FROM artifacts WHERE production_revision_id = ? ORDER BY id", (revision_id,))]
+            ids = [
+                str(row["id"])
+                for row in db.execute(
+                    "SELECT id FROM artifacts WHERE production_revision_id = ? ORDER BY id",
+                    (revision_id,),
+                )
+            ]
         return [self.artifact(artifact_id, verify_bytes=verify_bytes) for artifact_id in ids]
 
     def read_bytes(self, artifact_id: str) -> bytes:
         artifact = self.artifact(artifact_id)
-        return self.objects.read_bytes(str(artifact["object_digest"]), int(artifact["byte_size"]), str(artifact["object_relpath"]))
+        return self.objects.read_bytes(
+            str(artifact["object_digest"]),
+            int(artifact["byte_size"]),
+            str(artifact["object_relpath"]),
+        )
 
     def is_current_for(self, artifact_id: str, expected_fingerprint: str | None) -> bool:
         artifact = self.artifact(artifact_id, verify_bytes=True)
@@ -194,7 +239,13 @@ class ArtifactService:
             artifact = db.execute("SELECT production_id FROM artifacts WHERE id = ?", (artifact_id,)).fetchone()
             if not artifact:
                 raise NotFound(f"artifact not found: {artifact_id}")
-            self._journal(db, str(artifact["production_id"]), artifact_id, "ARTIFACT_DEPENDENCY_ADDED", {"source_artifact_id": source_artifact_id, "role": role})
+            self._journal(
+                db,
+                str(artifact["production_id"]),
+                artifact_id,
+                "ARTIFACT_DEPENDENCY_ADDED",
+                {"source_artifact_id": source_artifact_id, "role": role},
+            )
 
     def _add_dependency_in_tx(self, db: Any, artifact_id: str, source_artifact_id: str, role: str) -> None:
         if artifact_id == source_artifact_id:
@@ -248,7 +299,14 @@ class ArtifactService:
             if canonical_text(value).encode("utf-8") != payload:
                 raise InvalidArtifact("visual_plan bytes must use canonical JSON")
 
-    def _journal(self, db: Any, production_id: str | None, artifact_id: str, event_type: str, event: dict[str, Any]) -> None:
+    def _journal(
+        self,
+        db: Any,
+        production_id: str | None,
+        artifact_id: str,
+        event_type: str,
+        event: dict[str, Any],
+    ) -> None:
         db.execute(
             "INSERT INTO journal_entries(production_id,entity_type,entity_id,event_type,event_json,created_at) VALUES (?,?,?,?,?,?)",
             (production_id, "artifact", artifact_id, event_type, canonical_text(event), self.clock.now()),

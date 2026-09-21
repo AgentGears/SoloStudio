@@ -48,6 +48,30 @@ _ROUTES: dict[str, dict[str, Any]] = {
         "estimated_cost_microunits": 0,
         "billing_ambiguity_on_interrupt": False,
     },
+    "composition.compile": {
+        "route_id": "route_composition_compile_v1",
+        "provider": "builtin_deterministic",
+        "model": "composition-spec-v1",
+        "tool_profile": "artifact-provider-v1",
+        "estimated_cost_microunits": 0,
+        "billing_ambiguity_on_interrupt": False,
+    },
+    "cover.produce": {
+        "route_id": "route_cover_produce_v1",
+        "provider": "builtin_deterministic",
+        "model": "cover-copy-v1",
+        "tool_profile": "artifact-provider-v1",
+        "estimated_cost_microunits": 0,
+        "billing_ambiguity_on_interrupt": False,
+    },
+    "media.render": {
+        "route_id": "route_media_render_v1",
+        "provider": "local_ffmpeg",
+        "model": "synthetic-media-v1",
+        "tool_profile": "media-render-v1",
+        "estimated_cost_microunits": 0,
+        "billing_ambiguity_on_interrupt": False,
+    },
 }
 
 

@@ -64,6 +64,7 @@ class ExecutionMixin:
                 "semantic_capability": str(row["semantic_capability"]),
                 "source_state_version": row["source_state_version"],
                 "production_revision_id": row["production_revision_id"],
+                "variant_id": row["variant_id"],
                 "input_fingerprint": str(row["input_fingerprint"]),
                 "spec": json.loads(row["spec_json"]),
                 "route": json.loads(row["route_json"]),
@@ -94,7 +95,7 @@ class ExecutionMixin:
         with self.store.read() as db:
             row = db.execute(
                 """
-                SELECT a.*,j.production_id,j.job_class,j.production_revision_id,j.state AS job_state
+                SELECT a.*,j.production_id,j.job_class,j.production_revision_id,j.variant_id,j.state AS job_state
                 FROM attempts a JOIN job_specs j ON j.id = a.job_id WHERE a.id = ?
                 """,
                 (attempt_id,),
@@ -116,13 +117,18 @@ class ExecutionMixin:
                     raise InvalidArtifact("worker output path escapes attempt namespace")
                 if not path.is_file():
                     raise InvalidArtifact(f"expected worker output is missing: {rel}")
+                extra_metadata = output.get("metadata", {})
+                if not isinstance(extra_metadata, dict):
+                    raise InvalidArtifact("worker output metadata must be an object")
+                metadata = dict(extra_metadata)
+                metadata["worker_output_role"] = output.get("role", "primary")
                 prepared.append((output, self.artifacts.prepare_bytes(
                     path.read_bytes(),
                     kind=str(output.get("kind", "source_reference")),
                     media_type=str(output.get("media_type", "application/octet-stream")),
                     producer_stage=str(output.get("producer_stage", "media_worker")),
                     input_fingerprint=output.get("input_fingerprint"),
-                    metadata={"worker_output_role": output.get("role", "primary")},
+                    metadata=metadata,
                 )))
 
         now = self.clock.now()
@@ -131,21 +137,41 @@ class ExecutionMixin:
             if row["job_class"] != "ARTIFACT":
                 raise InvalidCommand("attempt is not an artifact job")
             artifact_ids: list[str] = []
+            rendered_video_registered = False
             for _output, prepared_artifact in prepared:
                 artifact_ids.append(self.artifacts.register_prepared_in_tx(
                     db,
                     prepared_artifact,
                     production_id=str(row["production_id"]),
                     production_revision_id=row["production_revision_id"],
+                    variant_id=row["variant_id"],
                     producer_job_id=str(row["job_id"]),
                     producer_attempt_id=attempt_id,
                 ))
+                rendered_video_registered = rendered_video_registered or prepared_artifact.kind == "rendered_video"
             result = {"artifact_ids": artifact_ids}
             db.execute(
                 "UPDATE attempts SET state='SUCCEEDED',result_json=?,finished_at=? WHERE id=?",
                 (canonical_text(result), now, attempt_id),
             )
             db.execute("UPDATE job_specs SET state='SUCCEEDED',finished_at=? WHERE id=?", (now, row["job_id"]))
+            if rendered_video_registered and row["variant_id"] is not None:
+                if row["job_type"] != "MEDIA_RENDER" or row["semantic_capability"] != "media.render":
+                    raise InvalidCommand("only an authoritative media.render JobSpec can make a variant ready")
+                updated = db.execute(
+                    "UPDATE delivery_variants SET state='READY' WHERE id=? AND state IN ('PROPOSED','READY')",
+                    (row["variant_id"],),
+                ).rowcount
+                if updated != 1:
+                    raise InvalidCommand("rendered video cannot make the bound variant ready")
+                self._journal(
+                    db,
+                    str(row["production_id"]),
+                    "delivery_variant",
+                    str(row["variant_id"]),
+                    "DELIVERY_VARIANT_READY",
+                    {"render_artifact_ids": artifact_ids},
+                )
             self.costs.settle_job_in_tx(db, str(row["job_id"]))
             self._journal(db, str(row["production_id"]), "attempt", attempt_id, "ATTEMPT_SUCCEEDED", result)
             return artifact_ids
@@ -205,7 +231,8 @@ class ExecutionMixin:
     def _running_attempt_row(self, db: Any, attempt_id: str):
         row = db.execute(
             """
-            SELECT a.*,j.production_id,j.job_class,j.production_revision_id,j.state AS job_state,j.max_attempts
+            SELECT a.*,j.production_id,j.job_class,j.job_type,j.semantic_capability,
+                   j.production_revision_id,j.variant_id,j.state AS job_state,j.max_attempts
             FROM attempts a JOIN job_specs j ON j.id=a.job_id WHERE a.id=?
             """,
             (attempt_id,),
@@ -215,4 +242,3 @@ class ExecutionMixin:
         if row["state"] != "RUNNING" or row["job_state"] != "RUNNING":
             raise InvalidCommand("attempt is not running")
         return row
-
