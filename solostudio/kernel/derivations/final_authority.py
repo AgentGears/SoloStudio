@@ -111,7 +111,6 @@ class Slice8ArtifactAuthorityService(M0ArtifactAuthorityService):
             job["job_class"] != "ARTIFACT"
             or job["job_type"] != job_type
             or job["semantic_capability"] != capability
-            or job["variant_id"] is not None
             or job["state"] != "RUNNING"
         ):
             raise InvalidArtifact("derivation output producer JobSpec is not authoritative and running")
