@@ -75,6 +75,26 @@ class M0ArtifactAuthorityService(VariantArtifactAuthorityService):
         )
 
     @staticmethod
+    def _validate_composition_payload(
+        composition: Any,
+        *,
+        variant: dict[str, Any],
+        composition_preferences: dict[str, Any],
+        source_digests: dict[str, str],
+    ) -> None:
+        VariantArtifactAuthorityService._validate_composition_payload(
+            composition,
+            variant=variant,
+            composition_preferences=composition_preferences,
+            source_digests=source_digests,
+        )
+        intent = variant["intent"]
+        if composition["duration_ms"] != intent["duration_min_ms"]:
+            raise InvalidArtifact(
+                "composition payload duration does not match deterministic compiler selection"
+            )
+
+    @staticmethod
     def _validate_variant_against_revision(
         variant: dict[str, Any],
         revision_payload: dict[str, Any],
