@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
 from typing import Any, Iterable
 
 from solostudio.kernel.artifacts import PreparedArtifact
@@ -195,6 +197,109 @@ class Slice8ArtifactAuthorityService(M0ArtifactAuthorityService):
             ).decode("utf-8")
         except UnicodeDecodeError as exc:
             raise InvalidArtifact(f"{role} source is not valid UTF-8") from exc
+
+    def _validate_render_source_authority(
+        self,
+        db: Any,
+        prepared: PreparedArtifact,
+        *,
+        production_id: str,
+        production_revision_id: str | None,
+        variant_id: str | None,
+        producer_job_id: str | None,
+    ) -> None:
+        super()._validate_render_source_authority(
+            db,
+            prepared,
+            production_id=production_id,
+            production_revision_id=production_revision_id,
+            variant_id=variant_id,
+            producer_job_id=producer_job_id,
+        )
+        if producer_job_id is None:
+            raise InvalidArtifact("rendered_video is missing producer JobSpec authority")
+        job = self._job_authority(db, producer_job_id)
+        source_entries = job["spec"].get("source_artifacts")
+        if (
+            not isinstance(source_entries, list)
+            or len(source_entries) != 1
+            or not isinstance(source_entries[0], dict)
+            or not isinstance(source_entries[0].get("artifact_id"), str)
+            or not source_entries[0]["artifact_id"]
+        ):
+            raise InvalidArtifact("media.render source composition authority is invalid")
+        composition_artifact = self._artifact_authority(db, str(source_entries[0]["artifact_id"]))
+        composition_payload = self.objects.read_bytes(
+            str(composition_artifact["object_digest"]),
+            int(composition_artifact["byte_size"]),
+            str(composition_artifact["object_relpath"]),
+        )
+        try:
+            composition = json.loads(composition_payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise InvalidArtifact("media.render source composition is unreadable") from exc
+        if not isinstance(composition, dict):
+            raise InvalidArtifact("media.render source composition must be an object")
+
+        from solostudio.kernel.variants.pipeline import VariantPipelineService
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            expected_path = Path(temp_dir) / "expected-render.mp4"
+            VariantPipelineService._render_fixture(
+                expected_path,
+                composition,
+                str(job["input_fingerprint"]),
+            )
+            expected_payload = expected_path.read_bytes()
+        retained_payload = self.objects.read_bytes(
+            prepared.object_record.digest_sha256,
+            prepared.object_record.byte_size,
+            prepared.object_record.object_relpath,
+        )
+        if retained_payload != expected_payload:
+            raise InvalidArtifact("rendered_video bytes do not match deterministic media fixture output")
+
+    @staticmethod
+    def _validate_composition_payload(
+        composition: Any,
+        *,
+        variant: dict[str, Any],
+        composition_preferences: dict[str, Any],
+        source_digests: dict[str, str],
+    ) -> None:
+        M0ArtifactAuthorityService._validate_composition_payload(
+            composition,
+            variant=variant,
+            composition_preferences=composition_preferences,
+            source_digests=source_digests,
+        )
+        intent = variant["intent"]
+        visual_keys = sorted(key for key in source_digests if key.startswith("visual."))
+        tracks: list[dict[str, Any]] = [
+            {
+                "kind": "visual",
+                "items": [{"object_digest": source_digests[key]} for key in visual_keys],
+            },
+            {"kind": "voice", "object_digest": source_digests["voice"]},
+        ]
+        if intent.get("caption_mode") == "burned":
+            tracks.append(
+                {
+                    "kind": "captions",
+                    "object_digest": source_digests["captions"],
+                    "style": {"mode": "burned"},
+                }
+            )
+        expected = {
+            "schema_version": 1,
+            "variant_intent_hash": variant["intent_hash"],
+            "composition_preferences": composition_preferences,
+            "canvas": composition["canvas"],
+            "duration_ms": intent["duration_min_ms"],
+            "tracks": tracks,
+        }
+        if composition != expected:
+            raise InvalidArtifact("composition payload does not match deterministic compiler output")
 
     @staticmethod
     def _validate_running_producer_attempt(
