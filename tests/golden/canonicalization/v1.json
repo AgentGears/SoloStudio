@@ -60,10 +60,10 @@
         "settings": {
           "visibility": "public"
         },
-        "scheduled_for": "2026-09-22T12:00:00Z"
+        "scheduled_for": "2026-09-22T12:00:00.000Z"
       },
-      "canonical": "{\"destination_account_id\":\"dest_fake_1\",\"destination_contract_fingerprint\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"media\":[{\"artifact_id\":\"art_render\",\"byte_size\":123456,\"media_type\":\"video/mp4\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}],\"metadata\":{\"description\":\"Demo description\",\"title\":\"Demo title\"},\"production_id\":\"prod_demo\",\"production_revision_id\":\"rev_demo\",\"scheduled_for\":\"2026-09-22T12:00:00Z\",\"schema_version\":1,\"settings\":{\"visibility\":\"public\"},\"variant_id\":\"variant_demo\"}",
-      "sha256": "bf06fe2554a8e752c5bd90d435c32ab271bb1d888a89026daa1e9d5bcb993e50"
+      "canonical": "{\"destination_account_id\":\"dest_fake_1\",\"destination_contract_fingerprint\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"media\":[{\"artifact_id\":\"art_render\",\"byte_size\":123456,\"media_type\":\"video/mp4\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}],\"metadata\":{\"description\":\"Demo description\",\"title\":\"Demo title\"},\"production_id\":\"prod_demo\",\"production_revision_id\":\"rev_demo\",\"scheduled_for\":\"2026-09-22T12:00:00.000Z\",\"schema_version\":1,\"settings\":{\"visibility\":\"public\"},\"variant_id\":\"variant_demo\"}",
+      "sha256": "9a5cb8547141b6a1ba4b1e832117b39403a76b5a3312a355282ce2a396bd26ac"
     },
     {
       "name": "publication-envelope-v1",
@@ -80,12 +80,12 @@
         "settings": {
           "visibility": "public"
         },
-        "scheduled_for": "2026-09-22T12:00:00Z",
+        "scheduled_for": "2026-09-22T12:00:00.000Z",
         "cost_ceiling_microunits": 0,
         "built_contract_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
       },
-      "canonical": "{\"artifact_digests\":[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"],\"built_contract_fingerprint\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"cost_ceiling_microunits\":0,\"description\":\"Demo description\",\"destination_account_id\":\"dest_fake_1\",\"package_revision_id\":\"pkg_demo\",\"publication_intent_id\":\"intent_demo_1\",\"scheduled_for\":\"2026-09-22T12:00:00Z\",\"schema_version\":1,\"settings\":{\"visibility\":\"public\"},\"title\":\"Demo title\"}",
-      "sha256": "d151173e33a9f06d8bd319d39d4cfd060933c10752f42b5bffbce3ff43ac4fb1"
+      "canonical": "{\"artifact_digests\":[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"],\"built_contract_fingerprint\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"cost_ceiling_microunits\":0,\"description\":\"Demo description\",\"destination_account_id\":\"dest_fake_1\",\"package_revision_id\":\"pkg_demo\",\"publication_intent_id\":\"intent_demo_1\",\"scheduled_for\":\"2026-09-22T12:00:00.000Z\",\"schema_version\":1,\"settings\":{\"visibility\":\"public\"},\"title\":\"Demo title\"}",
+      "sha256": "2021fac56f65bf7d3f392f3696788c58db8e57737437accb6bb1f8780c0b011e"
     }
   ]
 }
