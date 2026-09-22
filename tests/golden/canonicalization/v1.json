@@ -59,10 +59,11 @@
         },
         "settings": {
           "visibility": "public"
-        }
+        },
+        "scheduled_for": "2026-09-22T12:00:00Z"
       },
-      "canonical": "{\"destination_account_id\":\"dest_fake_1\",\"destination_contract_fingerprint\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"media\":[{\"artifact_id\":\"art_render\",\"byte_size\":123456,\"media_type\":\"video/mp4\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}],\"metadata\":{\"description\":\"Demo description\",\"title\":\"Demo title\"},\"production_id\":\"prod_demo\",\"production_revision_id\":\"rev_demo\",\"schema_version\":1,\"settings\":{\"visibility\":\"public\"},\"variant_id\":\"variant_demo\"}",
-      "sha256": "2d074b27e7fe106d5ab587abe871d649eacc9db50c037f2986fa32d71b94a01f"
+      "canonical": "{\"destination_account_id\":\"dest_fake_1\",\"destination_contract_fingerprint\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"media\":[{\"artifact_id\":\"art_render\",\"byte_size\":123456,\"media_type\":\"video/mp4\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}],\"metadata\":{\"description\":\"Demo description\",\"title\":\"Demo title\"},\"production_id\":\"prod_demo\",\"production_revision_id\":\"rev_demo\",\"scheduled_for\":\"2026-09-22T12:00:00Z\",\"schema_version\":1,\"settings\":{\"visibility\":\"public\"},\"variant_id\":\"variant_demo\"}",
+      "sha256": "bf06fe2554a8e752c5bd90d435c32ab271bb1d888a89026daa1e9d5bcb993e50"
     },
     {
       "name": "publication-envelope-v1",
