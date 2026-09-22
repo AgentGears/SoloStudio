@@ -86,7 +86,7 @@ class DestinationPackageEnvelopeTests(JobTestCase):
             settings={"visibility": "public"},
         )
 
-    def test_contract_snapshot_persists_across_restart_and_refreshes_to_v2_after_expiry(self) -> None:
+    def test_contract_snapshot_persists_refreshes_same_fingerprint_and_discovers_v2(self) -> None:
         snapshot1 = self.kernel.destinations.discover_contract("dest_fake_1", valid_for_seconds=60)
         self.assertEqual(snapshot1["contract"]["contract_version"], "fake-v1")
         self.assertEqual(snapshot1["fingerprint"], canonical_hash(snapshot1["contract"]))
@@ -103,6 +103,11 @@ class DestinationPackageEnvelopeTests(JobTestCase):
         self.kernel.destinations.clock.value = "2026-09-19T20:02:00.000Z"
         with self.assertRaises(ContractExpired):
             self.kernel.destinations.current_contract("dest_fake_1", refresh=False)
+        renewed = self.kernel.destinations.current_contract("dest_fake_1", refresh=True)
+        self.assertEqual(renewed["id"], snapshot1["id"])
+        self.assertEqual(renewed["fingerprint"], snapshot1["fingerprint"])
+        self.assertNotEqual(renewed["valid_until"], snapshot1["valid_until"])
+        self.assertFalse(self.kernel.destinations.is_expired(str(renewed["id"])))
 
         self.kernel.destinations.set_fake_contract_version("dest_fake_1", "fake-v2")
         snapshot2 = self.kernel.destinations.current_contract("dest_fake_1", refresh=True)
@@ -236,7 +241,7 @@ class DestinationPackageEnvelopeTests(JobTestCase):
                 settings={"visibility": "public"},
             )
 
-    def test_persisted_contract_package_and_envelope_rows_are_immutable(self) -> None:
+    def test_persisted_contract_content_package_and_envelope_rows_are_immutable(self) -> None:
         snapshot = self.kernel.destinations.discover_contract("dest_fake_1")
         variant_id, render_id = self._ready_variant()
         package_id = self._build_package(variant_id, render_id)
@@ -247,7 +252,7 @@ class DestinationPackageEnvelopeTests(JobTestCase):
         with self.assertRaises(Exception):
             with self.kernel.store.write() as db:
                 db.execute(
-                    "UPDATE destination_contract_snapshots SET valid_until=NULL WHERE id=?",
+                    "UPDATE destination_contract_snapshots SET canonical_json='{}' WHERE id=?",
                     (snapshot["id"],),
                 )
         with self.assertRaises(Exception):
