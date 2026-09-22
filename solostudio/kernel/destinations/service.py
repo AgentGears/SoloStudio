@@ -130,11 +130,33 @@ class DestinationContractService:
                 result = self._snapshot_row(existing)
                 if result["canonical_json"] != canonical_json:
                     raise RuntimeError("destination contract fingerprint collision detected")
-                if self._is_expired(result):
-                    raise ContractExpired(
-                        "current destination contract fingerprint has only an expired immutable snapshot"
-                    )
-                return result
+                if not self._is_expired(result):
+                    return result
+                db.execute(
+                    """
+                    UPDATE destination_contract_snapshots
+                    SET discovered_at=?,valid_until=?
+                    WHERE id=?
+                    """,
+                    (now, valid_until, result["id"]),
+                )
+                self._journal(
+                    db,
+                    str(result["id"]),
+                    "DESTINATION_CONTRACT_REFRESHED",
+                    {
+                        "destination_account_id": account_id,
+                        "fingerprint": fingerprint,
+                        "contract_version": version,
+                        "valid_until": valid_until,
+                    },
+                )
+                refreshed = db.execute(
+                    "SELECT * FROM destination_contract_snapshots WHERE id=?",
+                    (result["id"],),
+                ).fetchone()
+                assert refreshed is not None
+                return self._snapshot_row(refreshed)
 
             snapshot_id = self.ids.new("contract")
             db.execute(
