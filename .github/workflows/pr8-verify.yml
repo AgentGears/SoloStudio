@@ -1,0 +1,25 @@
+name: PR8 destination packaging verification
+
+on:
+  push:
+    branches:
+      - m0-b-01-destination-package-envelope
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install media runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version
+          ffprobe -version
+      - name: Compile
+        run: python -m compileall -q solostudio tests
+      - name: Full repository suite
+        run: python -m unittest discover -v
