@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from solostudio.kernel.errors import InvalidCommand
@@ -21,11 +22,7 @@ class Slice9PackagingService(PackagingService):
         scheduled_for: str | None = None,
     ) -> str:
         if scheduled_for is not None:
-            if not isinstance(scheduled_for, str) or not scheduled_for.strip():
-                raise InvalidCommand("scheduled_for must be null or an ISO-8601 timestamp")
-            from solostudio.kernel.packaging.service import _validate_timestamp
-
-            _validate_timestamp(scheduled_for)
+            scheduled_for = _normalize_scheduled_for(scheduled_for)
 
         variant = self.variants.variant(variant_id)
         if variant["state"] != "READY":
@@ -120,11 +117,8 @@ class Slice9PackagingService(PackagingService):
         self._validate_settings(contract, package["settings"])
         scheduled_for = package["scheduled_for"]
         if scheduled_for is not None:
-            from solostudio.kernel.packaging.service import _validate_timestamp
-
-            if not isinstance(scheduled_for, str):
-                raise RuntimeError("package scheduled_for value is invalid")
-            _validate_timestamp(scheduled_for)
+            if not isinstance(scheduled_for, str) or _normalize_scheduled_for(scheduled_for) != scheduled_for:
+                raise RuntimeError("package scheduled_for is not canonical UTC RFC3339")
         return result
 
     @staticmethod
@@ -181,8 +175,10 @@ class Slice9PackagingService(PackagingService):
         cost_ceiling_microunits: int,
     ) -> dict[str, Any]:
         package_schedule = package.get("scheduled_for")
-        if scheduled_for is not None and scheduled_for != package_schedule:
-            raise InvalidCommand("PublicationEnvelope schedule must equal its PackageRevision schedule")
+        if scheduled_for is not None:
+            normalized_requested = _normalize_scheduled_for(scheduled_for)
+            if normalized_requested != package_schedule:
+                raise InvalidCommand("PublicationEnvelope schedule must equal its PackageRevision schedule")
         return PackagingService._expected_envelope(
             package_revision_id=package_revision_id,
             package=package,
@@ -205,6 +201,19 @@ class Slice9PackagingService(PackagingService):
             "PUBLICATION_ENVELOPE_CREATED": "ENVELOPE_CREATED",
         }.get(event_type, event_type)
         super()._journal(db, production_id, entity_type, entity_id, event_type, event)
+
+
+def _normalize_scheduled_for(value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise InvalidCommand("scheduled_for must be null or an ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise InvalidCommand("scheduled_for must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise InvalidCommand("scheduled_for must include an explicit timezone offset")
+    utc = parsed.astimezone(timezone.utc)
+    return utc.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _is_sha256(value: Any) -> bool:
