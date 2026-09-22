@@ -24,3 +24,9 @@ class BudgetExceeded(SoloStudioError):
     code = "BUDGET_EXCEEDED"
 class InvalidCostState(SoloStudioError):
     code = "INVALID_COST_STATE"
+class ContractExpired(SoloStudioError):
+    code = "CONTRACT_EXPIRED"
+class VariantRequired(SoloStudioError):
+    code = "VARIANT_REQUIRED"
+class PackageRequired(SoloStudioError):
+    code = "PACKAGE_REQUIRED"

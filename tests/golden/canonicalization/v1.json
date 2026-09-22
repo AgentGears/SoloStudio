@@ -35,6 +35,57 @@
       },
       "canonical": "{\"𐀀\":1,\"\":2}",
       "sha256": "4045c21a23c8ae8f8d9add81f54bd506bee65885099876fb4afb378b1f2c3516"
+    },
+    {
+      "name": "package-revision-v1",
+      "payload": {
+        "schema_version": 1,
+        "production_id": "prod_demo",
+        "production_revision_id": "rev_demo",
+        "variant_id": "variant_demo",
+        "destination_account_id": "dest_fake_1",
+        "destination_contract_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "media": [
+          {
+            "artifact_id": "art_render",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "media_type": "video/mp4",
+            "byte_size": 123456
+          }
+        ],
+        "metadata": {
+          "title": "Demo title",
+          "description": "Demo description"
+        },
+        "settings": {
+          "visibility": "public"
+        },
+        "scheduled_for": "2026-09-22T12:00:00.000Z"
+      },
+      "canonical": "{\"destination_account_id\":\"dest_fake_1\",\"destination_contract_fingerprint\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"media\":[{\"artifact_id\":\"art_render\",\"byte_size\":123456,\"media_type\":\"video/mp4\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}],\"metadata\":{\"description\":\"Demo description\",\"title\":\"Demo title\"},\"production_id\":\"prod_demo\",\"production_revision_id\":\"rev_demo\",\"scheduled_for\":\"2026-09-22T12:00:00.000Z\",\"schema_version\":1,\"settings\":{\"visibility\":\"public\"},\"variant_id\":\"variant_demo\"}",
+      "sha256": "9a5cb8547141b6a1ba4b1e832117b39403a76b5a3312a355282ce2a396bd26ac"
+    },
+    {
+      "name": "publication-envelope-v1",
+      "payload": {
+        "schema_version": 1,
+        "publication_intent_id": "intent_demo_1",
+        "package_revision_id": "pkg_demo",
+        "destination_account_id": "dest_fake_1",
+        "artifact_digests": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        "title": "Demo title",
+        "description": "Demo description",
+        "settings": {
+          "visibility": "public"
+        },
+        "scheduled_for": "2026-09-22T12:00:00.000Z",
+        "cost_ceiling_microunits": 0,
+        "built_contract_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "canonical": "{\"artifact_digests\":[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"],\"built_contract_fingerprint\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"cost_ceiling_microunits\":0,\"description\":\"Demo description\",\"destination_account_id\":\"dest_fake_1\",\"package_revision_id\":\"pkg_demo\",\"publication_intent_id\":\"intent_demo_1\",\"scheduled_for\":\"2026-09-22T12:00:00.000Z\",\"schema_version\":1,\"settings\":{\"visibility\":\"public\"},\"title\":\"Demo title\"}",
+      "sha256": "2021fac56f65bf7d3f392f3696788c58db8e57737437accb6bb1f8780c0b011e"
     }
   ]
 }

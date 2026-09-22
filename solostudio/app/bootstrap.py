@@ -12,8 +12,10 @@ from solostudio.kernel.clock import Clock, SystemClock
 from solostudio.kernel.costs import CostService
 from solostudio.kernel.derivations import DerivationArtifactService, DerivationService
 from solostudio.kernel.derivations.final_authority import Slice8ArtifactAuthorityService
+from solostudio.kernel.destinations import DestinationContractService
 from solostudio.kernel.ids import IdSource, RandomIdSource
 from solostudio.kernel.jobs import JobService, SupervisedMediaWorker
+from solostudio.kernel.packaging import PackagingService
 from solostudio.kernel.principals import AGENT_PRINCIPAL, SYSTEM_PRINCIPAL, USER_PRINCIPAL
 from solostudio.kernel.productions import ProductionService
 from solostudio.kernel.store import KernelStore
@@ -34,6 +36,8 @@ class StudioKernel:
     derivations: DerivationService
     variants: VariantService
     variant_pipeline: VariantPipelineService
+    destinations: DestinationContractService
+    packaging: PackagingService
     worker: SupervisedMediaWorker
     user: KernelChannel
     agent: KernelChannel
@@ -65,6 +69,16 @@ def bootstrap(data_dir: str | Path, *, clock: Clock | None = None, ids: IdSource
     derivations = DerivationService(productions, artifacts, jobs, capabilities.router)
     variants = VariantService(store, active_clock, active_ids)
     variant_pipeline = VariantPipelineService(productions, variants, derivations, artifacts, jobs)
+    destinations = DestinationContractService(store, active_clock, active_ids)
+    destinations.ensure_fake_account()
+    packaging = PackagingService(
+        store,
+        active_clock,
+        active_ids,
+        artifacts,
+        variants,
+        destinations,
+    )
     worker = SupervisedMediaWorker(jobs)
     backups = BackupService(root, store, objects, active_clock, active_ids)
     return StudioKernel(
@@ -80,6 +94,8 @@ def bootstrap(data_dir: str | Path, *, clock: Clock | None = None, ids: IdSource
         derivations,
         variants,
         variant_pipeline,
+        destinations,
+        packaging,
         worker,
         KernelChannel(USER_PRINCIPAL, productions),
         KernelChannel(AGENT_PRINCIPAL, productions),
