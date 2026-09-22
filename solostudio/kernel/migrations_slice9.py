@@ -58,10 +58,15 @@ SLICE9_MIGRATIONS: tuple[tuple[int, str], ...] = (
         CREATE INDEX idx_publication_envelopes_package
         ON publication_envelopes(package_revision_id, created_at);
 
-        CREATE TRIGGER destination_contract_snapshots_immutable
-        BEFORE UPDATE ON destination_contract_snapshots
+        CREATE TRIGGER destination_contract_snapshot_content_immutable
+        BEFORE UPDATE OF id,destination_account_id,fingerprint,canonical_json
+        ON destination_contract_snapshots
+        WHEN NEW.id IS NOT OLD.id
+          OR NEW.destination_account_id IS NOT OLD.destination_account_id
+          OR NEW.fingerprint IS NOT OLD.fingerprint
+          OR NEW.canonical_json IS NOT OLD.canonical_json
         BEGIN
-            SELECT RAISE(ABORT, 'destination contract snapshots are immutable');
+            SELECT RAISE(ABORT, 'destination contract snapshot content identity is immutable');
         END;
 
         CREATE TRIGGER package_revisions_lineage_insert
