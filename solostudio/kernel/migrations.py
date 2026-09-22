@@ -339,3 +339,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         """,
     ),
 )
+
+from solostudio.kernel.migrations_slice9 import SLICE9_MIGRATIONS
+
+MIGRATIONS = MIGRATIONS + SLICE9_MIGRATIONS
