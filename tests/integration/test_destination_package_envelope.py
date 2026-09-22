@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 from solostudio.app.bootstrap import bootstrap
 from solostudio.kernel.clock import FixedClock
 from solostudio.kernel.errors import ContractExpired, InvalidArtifact, InvalidCommand, VariantRequired
@@ -53,6 +51,10 @@ class DestinationPackageEnvelopeTests(JobTestCase):
             source_revision_id=revision.revision_id,
             intent=self._intent(aspect_ratio),
         )
+        render_id = self._materialize_variant(variant_id)
+        return variant_id, render_id
+
+    def _materialize_variant(self, variant_id: str) -> str:
         for plan in self.kernel.variant_pipeline.plan_inputs(variant_id):
             if plan.job_id is not None:
                 job = self.kernel.jobs.job(str(plan.job_id))
@@ -67,7 +69,7 @@ class DestinationPackageEnvelopeTests(JobTestCase):
         else:
             render_id = str(render.artifact_id)
         self.assertEqual(self.kernel.variants.variant(variant_id)["state"], "READY")
-        return variant_id, render_id
+        return render_id
 
     def _build_package(
         self,
@@ -192,7 +194,6 @@ class DestinationPackageEnvelopeTests(JobTestCase):
         self.assertEqual(unchanged.current_contract_fingerprint, v2["fingerprint"])
         self.assertEqual(metadata_change.disposition, "PACKAGE_REQUIRED")
 
-        # A square package is valid under v1 but requires a new material variant under v2.
         self.kernel.destinations.set_fake_contract_version("dest_fake_1", "fake-v1")
         square_variant, square_render = self._ready_variant(aspect_ratio="1:1")
         square_package = self._build_package(square_variant, square_render)
@@ -214,31 +215,18 @@ class DestinationPackageEnvelopeTests(JobTestCase):
             count = db.execute("SELECT COUNT(*) FROM package_revisions").fetchone()[0]
         self.assertEqual(count, 0)
 
-    def test_package_rejects_render_from_another_variant(self) -> None:
+    def test_package_rejects_render_from_another_ready_variant(self) -> None:
         variant1, render1 = self._ready_variant()
-        package_id = self._build_package(variant1, render1)
-        self.assertIsInstance(package_id, str)
-
-        # Create a second Production so the wrong media authority is unambiguous.
-        project2 = self.kernel.productions.create_project("other-project", "other-project")
-        production2 = self.kernel.productions.create_production(project2, "Other", "other-production")
-        self.kernel.user.command(
-            production_id=production2,
-            expected_state_version=0,
-            idempotency_key="other-script",
-            action="set_script",
-            command_input={"text": "other"},
-        )
-        revision2 = self.kernel.user.capture_revision(
-            production_id=production2,
-            expected_state_version=1,
-            idempotency_key="other-capture",
-        )
+        source_revision_id = str(self.kernel.variants.variant(variant1)["source_revision_id"])
         variant2 = self.kernel.variants.create(
-            production_id=production2,
-            source_revision_id=revision2.revision_id,
-            intent=self._intent(),
+            production_id=self.production_id,
+            source_revision_id=source_revision_id,
+            parent_variant_id=variant1,
+            intent=self._intent("1:1"),
         )
+        self._materialize_variant(variant2)
+        self.assertEqual(self.kernel.variants.variant(variant2)["state"], "READY")
+
         with self.assertRaises(InvalidArtifact):
             self.kernel.packaging.build_package(
                 variant_id=variant2,
