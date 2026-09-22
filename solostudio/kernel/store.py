@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Iterator
 
 from solostudio.kernel.clock import Clock
-from solostudio.kernel.migrations import MIGRATIONS
+from solostudio.kernel.migrations import MIGRATIONS as BASE_MIGRATIONS
+from solostudio.kernel.migrations_slice9 import SLICE9_MIGRATIONS
+
+MIGRATIONS = BASE_MIGRATIONS + SLICE9_MIGRATIONS
 
 
 class KernelStore:
