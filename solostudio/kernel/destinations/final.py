@@ -37,7 +37,7 @@ class Slice9DestinationContractService(DestinationContractService):
             if not isinstance(version, str):
                 raise InvalidCommand("destination account has no current contract version")
 
-            contract = FakeDestinationConnector.contract(account_id, version)
+            contract = FakeDestinationConnector.get_destination_contract(account_id, version)
             canonical_json = canonical_text(contract)
             fingerprint = canonical_hash(contract)
             existing = db.execute(
@@ -130,7 +130,7 @@ class Slice9DestinationContractService(DestinationContractService):
             version = metadata.get("current_contract_version") if isinstance(metadata, dict) else None
             if not isinstance(version, str):
                 raise InvalidCommand("destination account has no current contract version")
-            expected = FakeDestinationConnector.contract(account_id, version)
+            expected = FakeDestinationConnector.get_destination_contract(account_id, version)
             fingerprint = canonical_hash(expected)
             row = db.execute(
                 """
@@ -150,11 +150,15 @@ class Slice9DestinationContractService(DestinationContractService):
     def _snapshot_row(row: Any) -> dict[str, Any]:
         result = DestinationContractService._snapshot_row(row)
         contract = result["contract"]
-        if contract.get("account_id") != result["destination_account_id"]:
+        account_id = str(result["destination_account_id"])
+        if contract.get("account_id") != account_id:
             raise RuntimeError("destination contract account identity does not match its snapshot row")
         if contract.get("destination") != FakeDestinationConnector.connector_type:
             raise RuntimeError("destination contract connector identity is invalid")
         version = contract.get("contract_version")
         if version not in FakeDestinationConnector.versions():
             raise RuntimeError("destination contract version is unsupported by the M0 fake connector")
+        expected = FakeDestinationConnector.get_destination_contract(account_id, str(version))
+        if contract != expected:
+            raise RuntimeError("destination contract snapshot does not match connector authority")
         return result
