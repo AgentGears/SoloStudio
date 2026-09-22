@@ -35,6 +35,56 @@
       },
       "canonical": "{\"𐀀\":1,\"\":2}",
       "sha256": "4045c21a23c8ae8f8d9add81f54bd506bee65885099876fb4afb378b1f2c3516"
+    },
+    {
+      "name": "package-revision-v1",
+      "payload": {
+        "schema_version": 1,
+        "production_id": "prod_demo",
+        "production_revision_id": "rev_demo",
+        "variant_id": "variant_demo",
+        "destination_account_id": "dest_fake_1",
+        "destination_contract_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "media": [
+          {
+            "artifact_id": "art_render",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "media_type": "video/mp4",
+            "byte_size": 123456
+          }
+        ],
+        "metadata": {
+          "title": "Demo title",
+          "description": "Demo description"
+        },
+        "settings": {
+          "visibility": "public"
+        }
+      },
+      "canonical": "{\"destination_account_id\":\"dest_fake_1\",\"destination_contract_fingerprint\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"media\":[{\"artifact_id\":\"art_render\",\"byte_size\":123456,\"media_type\":\"video/mp4\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}],\"metadata\":{\"description\":\"Demo description\",\"title\":\"Demo title\"},\"production_id\":\"prod_demo\",\"production_revision_id\":\"rev_demo\",\"schema_version\":1,\"settings\":{\"visibility\":\"public\"},\"variant_id\":\"variant_demo\"}",
+      "sha256": "2d074b27e7fe106d5ab587abe871d649eacc9db50c037f2986fa32d71b94a01f"
+    },
+    {
+      "name": "publication-envelope-v1",
+      "payload": {
+        "schema_version": 1,
+        "publication_intent_id": "intent_demo_1",
+        "package_revision_id": "pkg_demo",
+        "destination_account_id": "dest_fake_1",
+        "artifact_digests": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        "title": "Demo title",
+        "description": "Demo description",
+        "settings": {
+          "visibility": "public"
+        },
+        "scheduled_for": "2026-09-22T12:00:00Z",
+        "cost_ceiling_microunits": 0,
+        "built_contract_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "canonical": "{\"artifact_digests\":[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"],\"built_contract_fingerprint\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"cost_ceiling_microunits\":0,\"description\":\"Demo description\",\"destination_account_id\":\"dest_fake_1\",\"package_revision_id\":\"pkg_demo\",\"publication_intent_id\":\"intent_demo_1\",\"scheduled_for\":\"2026-09-22T12:00:00Z\",\"schema_version\":1,\"settings\":{\"visibility\":\"public\"},\"title\":\"Demo title\"}",
+      "sha256": "d151173e33a9f06d8bd319d39d4cfd060933c10752f42b5bffbce3ff43ac4fb1"
     }
   ]
 }
