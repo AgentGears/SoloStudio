@@ -139,6 +139,32 @@ class PackagingService:
             "package revision",
         )
         self._validate_package_row(result, package)
+
+        variant = self.variants.variant(str(result["variant_id"]))
+        if (
+            str(variant["production_id"]) != str(result["production_id"])
+            or str(variant["source_revision_id"]) != str(package["production_revision_id"])
+        ):
+            raise RuntimeError("package DeliveryVariant lineage is inconsistent")
+
+        contract_snapshot = self.destinations.snapshot(str(result["destination_contract_id"]))
+        if (
+            str(contract_snapshot["destination_account_id"]) != str(result["destination_account_id"])
+            or str(contract_snapshot["fingerprint"])
+            != str(result["destination_contract_fingerprint"])
+        ):
+            raise RuntimeError("package destination contract lineage is inconsistent")
+
+        media = package["media"][0]
+        artifact = self.artifacts.artifact(str(media["artifact_id"]), verify_bytes=True)
+        self._validate_render_binding(variant, artifact)
+        if (
+            str(artifact["object_digest"]) != str(media["sha256"])
+            or str(artifact["media_type"]) != str(media["media_type"])
+            or int(artifact["byte_size"]) != int(media["byte_size"])
+        ):
+            raise InvalidArtifact("PackageRevision media identity does not match retained Artifact bytes")
+
         result["package"] = package
         return result
 
@@ -229,6 +255,22 @@ class PackagingService:
             str(result["canonical_hash"]),
             "publication envelope",
         )
+        if set(envelope) != {
+            "schema_version",
+            "publication_intent_id",
+            "package_revision_id",
+            "destination_account_id",
+            "artifact_digests",
+            "title",
+            "description",
+            "settings",
+            "scheduled_for",
+            "cost_ceiling_microunits",
+            "built_contract_fingerprint",
+        }:
+            raise RuntimeError("publication envelope canonical fields are invalid")
+        if envelope.get("schema_version") != 1:
+            raise RuntimeError("publication envelope schema version is invalid")
         if envelope.get("publication_intent_id") != result["publication_intent_id"]:
             raise RuntimeError("publication envelope intent identity does not match its row")
         if envelope.get("package_revision_id") != result["package_revision_id"]:
@@ -354,7 +396,8 @@ class PackagingService:
         variant: dict[str, Any],
         artifact: dict[str, Any],
     ) -> None:
-        if contract.get("supported_content_types") != ["video"]:
+        supported = contract.get("supported_content_types")
+        if not isinstance(supported, list) or "video" not in supported:
             raise VariantRequired("destination no longer accepts the M0 video content type")
         media = contract.get("media")
         video = media.get("video") if isinstance(media, dict) else None
@@ -374,6 +417,8 @@ class PackagingService:
             or variant["intent"].get("aspect_ratio") not in allowed_aspects
             or type(min_duration) is not int
             or type(max_duration) is not int
+            or min_duration < 0
+            or max_duration < min_duration
         ):
             raise VariantRequired("destination material contract requires a different DeliveryVariant")
         metadata = artifact.get("metadata")
@@ -395,7 +440,7 @@ class PackagingService:
             raise InvalidCommand("destination text contract is invalid")
         title_max = text_contract.get("title_max")
         description_max = text_contract.get("description_max")
-        if type(title_max) is not int or type(description_max) is not int:
+        if type(title_max) is not int or type(description_max) is not int or title_max < 0 or description_max < 0:
             raise InvalidCommand("destination text limits are invalid")
         if len(title) > title_max:
             raise InvalidCommand("package title exceeds destination contract")
@@ -428,6 +473,10 @@ class PackagingService:
     ) -> dict[str, Any]:
         if type(cost_ceiling_microunits) is not int or cost_ceiling_microunits < 0:
             raise InvalidCommand("stored cost ceiling is invalid")
+        if scheduled_for is not None:
+            if not isinstance(scheduled_for, str):
+                raise InvalidCommand("stored scheduled_for value is invalid")
+            _validate_timestamp(scheduled_for)
         media = package.get("media")
         metadata = package.get("metadata")
         settings = package.get("settings")
@@ -455,8 +504,19 @@ class PackagingService:
 
     @staticmethod
     def _validate_package_row(row: dict[str, Any], package: dict[str, Any]) -> None:
-        if package.get("schema_version") != 1:
-            raise RuntimeError("package revision schema version is invalid")
+        expected_fields = {
+            "schema_version",
+            "production_id",
+            "production_revision_id",
+            "variant_id",
+            "destination_account_id",
+            "destination_contract_fingerprint",
+            "media",
+            "metadata",
+            "settings",
+        }
+        if set(package) != expected_fields or package.get("schema_version") != 1:
+            raise RuntimeError("package revision canonical fields are invalid")
         if package.get("production_id") != row["production_id"]:
             raise RuntimeError("package production identity does not match its row")
         if package.get("variant_id") != row["variant_id"]:
@@ -465,6 +525,25 @@ class PackagingService:
             raise RuntimeError("package destination account does not match its row")
         if package.get("destination_contract_fingerprint") != row["destination_contract_fingerprint"]:
             raise RuntimeError("package destination contract fingerprint does not match its row")
+        production_revision_id = package.get("production_revision_id")
+        if not isinstance(production_revision_id, str) or not production_revision_id:
+            raise RuntimeError("package production revision identity is invalid")
+        media = package.get("media")
+        if not isinstance(media, list) or len(media) != 1 or not isinstance(media[0], dict):
+            raise RuntimeError("M0 package requires exactly one media item")
+        if set(media[0]) != {"artifact_id", "sha256", "media_type", "byte_size"}:
+            raise RuntimeError("package media identity fields are invalid")
+        if (
+            not isinstance(media[0].get("artifact_id"), str)
+            or not media[0]["artifact_id"]
+            or not _is_sha256(media[0].get("sha256"))
+            or not isinstance(media[0].get("media_type"), str)
+            or type(media[0].get("byte_size")) is not int
+            or media[0]["byte_size"] < 0
+        ):
+            raise RuntimeError("package media identity values are invalid")
+        if not isinstance(package.get("metadata"), dict) or not isinstance(package.get("settings"), dict):
+            raise RuntimeError("package metadata/settings structure is invalid")
 
     def _journal(
         self,
@@ -508,6 +587,16 @@ def _load_canonical(canonical_json: str, expected_hash: str, label: str) -> dict
 
 def _validate_timestamp(value: str) -> None:
     try:
-        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise InvalidCommand("scheduled_for must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise InvalidCommand("scheduled_for must include an explicit timezone offset")
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
