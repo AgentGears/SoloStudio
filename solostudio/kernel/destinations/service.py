@@ -143,8 +143,9 @@ class DestinationContractService:
                 self._journal(
                     db,
                     str(result["id"]),
-                    "DESTINATION_CONTRACT_REFRESHED",
+                    "DESTINATION_CONTRACT_SNAPSHOTTED",
                     {
+                        "observation": "REFRESHED",
                         "destination_account_id": account_id,
                         "fingerprint": fingerprint,
                         "contract_version": version,
@@ -170,8 +171,9 @@ class DestinationContractService:
             self._journal(
                 db,
                 snapshot_id,
-                "DESTINATION_CONTRACT_DISCOVERED",
+                "DESTINATION_CONTRACT_SNAPSHOTTED",
                 {
+                    "observation": "DISCOVERED",
                     "destination_account_id": account_id,
                     "fingerprint": fingerprint,
                     "contract_version": version,
