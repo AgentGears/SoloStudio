@@ -134,7 +134,7 @@ class DestinationPackageEnvelopeTests(JobTestCase):
         self.assertEqual(package_body["media"][0]["artifact_id"], render_id)
         self.assertEqual(package_body["media"][0]["sha256"], render["object_digest"])
         self.assertEqual(package_body["media"][0]["byte_size"], render["byte_size"])
-        self.assertEqual(package_body["scheduled_for"], "2026-09-22T12:00:00Z")
+        self.assertEqual(package_body["scheduled_for"], "2026-09-22T12:00:00.000Z")
 
         envelope_id = self.kernel.packaging.build_envelope(
             package_revision_id=package_id,
@@ -155,13 +155,20 @@ class DestinationPackageEnvelopeTests(JobTestCase):
         )
         self.assertEqual(review["media"][0]["sha256"], render["object_digest"])
 
-    def test_schedule_change_requires_new_package_and_cannot_be_overridden_by_envelope(self) -> None:
+    def test_schedule_change_requires_new_package_and_uses_canonical_utc_identity(self) -> None:
         variant_id, render_id = self._ready_variant()
         package1 = self._build_package(
             variant_id,
             render_id,
             scheduled_for="2026-09-22T12:00:00Z",
         )
+        equivalent = self._build_package(
+            variant_id,
+            render_id,
+            scheduled_for="2026-09-22T15:00:00+03:00",
+        )
+        self.assertEqual(package1, equivalent)
+
         package2 = self._build_package(
             variant_id,
             render_id,
@@ -184,7 +191,7 @@ class DestinationPackageEnvelopeTests(JobTestCase):
         )
         self.assertEqual(
             self.kernel.packaging.envelope(envelope)["envelope"]["scheduled_for"],
-            "2026-09-22T12:00:00Z",
+            "2026-09-22T12:00:00.000Z",
         )
 
     def test_publication_intent_is_identity_bearing_and_replay_is_exact(self) -> None:
