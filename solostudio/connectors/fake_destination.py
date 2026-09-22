@@ -64,7 +64,7 @@ class FakeDestinationConnector:
     }
 
     @classmethod
-    def contract(cls, account_id: str, version: str) -> dict[str, Any]:
+    def get_destination_contract(cls, account_id: str, version: str) -> dict[str, Any]:
         if not isinstance(account_id, str) or not account_id:
             raise InvalidCommand("destination account id must be a non-empty string")
         template = cls._CONTRACTS.get(version)
@@ -73,6 +73,11 @@ class FakeDestinationConnector:
         contract = deepcopy(template)
         contract["account_id"] = account_id
         return contract
+
+    @classmethod
+    def contract(cls, account_id: str, version: str) -> dict[str, Any]:
+        """Compatibility alias; kernel contract discovery uses the connector interface method."""
+        return cls.get_destination_contract(account_id, version)
 
     @classmethod
     def versions(cls) -> tuple[str, ...]:
